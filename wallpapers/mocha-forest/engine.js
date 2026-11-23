@@ -281,8 +281,10 @@ void main(){
         ctx.drawImage(im, e.x || 0, e.y || 0); } };
     },
     // individual windows switching off and on  {items:[[x,y,w,h,'#facade']], off:0.1, onTime:[min,max], offTime:[min,max]}
+    // with {src}: items are [x,y,w,h] boxes and "off" shows that exact patch of the inpainted lights-off image
     windows(e) {
       const on = e.onTime || [10, 70], off = e.offTime || [4, 25], fade = e.fade || 0.6;
+      const img = e.src ? Object.assign(new Image(), { src: e.src }) : null;
       const ws = e.items.map(([x, y, w, h, c]) => {
         const lit = Math.random() > (e.off ?? 0.1);
         return { x, y, w, h, c, lit, at: -10, next: rnd(0, lit ? on[1] : off[1]) };
@@ -292,8 +294,9 @@ void main(){
         const k = Math.min(1, (T - w.at) / fade);       // 0..1 progress of the last switch
         const dark = w.lit ? 1 - k : k;                 // 1 = fully dark
         if (dark <= 0.01) continue;
-        ctx.globalAlpha = dark * (e.alpha ?? 0.92); ctx.fillStyle = w.c;
-        ctx.fillRect(w.x - 0.5, w.y - 0.5, w.w + 1, w.h + 1);
+        ctx.globalAlpha = dark * (e.alpha ?? 1);
+        if (img) { if (img.complete && img.naturalWidth) ctx.drawImage(img, w.x, w.y, w.w, w.h, w.x, w.y, w.w, w.h); }
+        else { ctx.fillStyle = w.c; ctx.fillRect(w.x - 0.5, w.y - 0.5, w.w + 1, w.h + 1); }
       } } };
     },
     // a blinking plane crossing the sky  {y, speed, dir (1 = to the right, -1 = to the left), x0, x1}

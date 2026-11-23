@@ -25,26 +25,15 @@ V_VIVID = dict(keep_light=0.6, light_weight=0.15, vivid=1.0)  # keeps neon / war
 def city():
     src = TODO / '5813490.jpg'
     a, L = load(src)
-    lit = (L - nd.median_filter(L, 15) > 18) & rect(0, 100, 2560, 1345) & ~rect(2440, 1280, 2560, 1360)
     fog = band(390, 520, 130) * 0.8
     far = small_bright(L, 22, 9, 6, rect(0, 405, 2560, 485))
-    lab, n = nd.label(lit)
-    sizes = nd.sum(lit, lab, range(1, n + 1))
-    boxes = [(s[1].start, s[0].start, s[1].stop - s[1].start, s[0].stop - s[0].start)
-             for i, s in enumerate(nd.find_objects(lab)) if s is not None and 6 <= sizes[i] <= 260]
-    boxes = [b for b in boxes if 4 <= b[2] <= 34 and 3 <= b[3] <= 16 and b[2] * b[3] <= 420]
 
     def post(bg, scene):
-        # each window gets the facade colour around it, so "off" looks like an unlit window, not a hole
-        items = []
-        for x, y, w, h in boxes:
-            x0, y0, x1, y1 = max(x - 3, 0), max(y - 3, 0), min(x + w + 3, W), min(y + h + 3, H)
-            ring = bg[y0:y1, x0:x1].reshape(-1, 3)
-            inner = lit[y0:y1, x0:x1].reshape(-1)
-            px = ring[~inner] if (~inner).sum() >= 4 else ring
-            r, g, b = np.median(px, 0).astype(int)
-            items.append([int(x), int(y), int(w), int(h), f'#{r:02x}{g:02x}{b:02x}'])
-        scene['effects'].insert(0, dict(type='windows', items=items, off=0.12, onTime=[12, 80], offTime=[4, 30]))
+        # precise windows + an inpainted "lights off" layer: switching a window off shows exactly its own facade patch
+        from city_windows import detect
+        boxes, rgba, _ = detect(src, Image.fromarray(bg.astype(np.uint8)))
+        scene['effects'].insert(0, dict(type='windows', src='windows_off.png', items=boxes, off=0.12, onTime=[12, 80], offTime=[4, 30]))
+        return {'windows_off.png': Image.fromarray(rgba)}
 
     return dict(
         title='Mocha City (animated)', src=src, recolor=V_VIVID, post=post,
@@ -201,7 +190,9 @@ def build(name):
     dest = ROOT / 'wallpapers' / f'mocha-{name}'
     dest.mkdir(parents=True, exist_ok=True)
     bg = mocha.recolor(str(d['src']), str(dest / 'background.jpg'), **d['recolor'])
-    if 'post' in d: d['post'](np.asarray(bg).astype(float), d['scene'])   # scene tweaks that need the recolored pixels
+    if 'post' in d:   # scene tweaks that need the recolored pixels; may return extra image files
+        for fname, im in (d['post'](np.asarray(bg).astype(float), d['scene']) or {}).items():
+            im.save(dest / fname, optimize=True)
     bg.resize((640, 360)).save(dest / 'preview.jpg', quality=85)
     m = d.get('mask', {})
     save_mask(dest / 'mask.png', m.get('r'), m.get('g'), m.get('b'), m.get('a'))
