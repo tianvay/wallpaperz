@@ -1,0 +1,412 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Blossom Hill (3D)</title>
+<style>html,body{margin:0;height:100%;background:#11111b;overflow:hidden}canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}</style>
+<script type="importmap">{ "imports": { "three": "./lib/three.module.min.js" } }</script>
+<!-- lib/ holds three.js r170 (MIT) and addons; kit3d.js is the shared engine (master copy in tools/kit3d) -->
+</head><body>
+<script type="module">
+// A terraced hill town in cherry blossom, ringed by a lake, with lavender fields on the far shore.
+// Catppuccin Latte by day, Mocha by night: paper lanterns climb the hill, floating lanterns drift on the lake,
+// sky lanterns rise at night, petals blow past the camera. URL options: see kit3d.js.
+import { createWorld, THREE, mergeGeometries, P, L, mix, smooth, fbm, ridged } from './kit3d.js';
+
+function height(x, z) {
+  const r = Math.hypot(x, z);
+  let h = 245 * Math.exp(-Math.pow(r / 280, 2.2)) * (0.9 + 0.15 * fbm(x * 0.005, z * 0.005, 3));
+  h += 30 * (fbm(x * 0.004 + 10, z * 0.004, 4) * 0.5 + 0.5);
+  const lake = fbm(x * 0.003, z * 0.003 + 5, 3) * 0.5 + 0.5;
+  h -= 80 * Math.exp(-Math.pow((r - 560) / 150, 2)) * (0.55 + 0.7 * lake);
+  h += 110 * smooth(700, 1100, r) * (0.4 + 0.6 * (fbm(x * 0.0035 + 40, z * 0.0035, 4) * 0.5 + 0.5));
+  h += 430 * smooth(1300, 1800, r) * (0.35 + 0.8 * ridged(x * 0.004 + 3, z * 0.004, 4));
+  h += 4 * fbm(x * 0.03, z * 0.03, 2);
+  const tw = smooth(470, 360, r) * smooth(8, 24, h);                 // terraces on the town hill
+  if (tw > 0) { const st = 19, u = h / st, f = u - Math.floor(u); h += (st * (Math.floor(u) + smooth(0.8, 1, f)) - h) * tw; }
+  return h - 6;
+}
+
+// ---------- time of day: Latte by day, Mocha by night ----------
+const NIGHT = { top: mix(P.crust, P.base, 0.6), mid: mix(P.base, P.s0, 0.5), hor: mix(P.s0, P.s1, 0.35), glow: P.s1, disc: P.lav,
+  light: P.lav, lightI: 0, hemi: mix(P.lav, P.blue, 0.3), hemiI: 0.4, cloud: mix(P.s1, P.s2, 0.4), mist: mix(P.s1, P.o0, 0.3),
+  water: mix(P.s0, P.blue, 0.1), fogD: 0.0006, stars: 1, win: 1, snow: 0.12 };
+const KEYS = [
+  { e: -1, ...NIGHT }, { e: -0.3, ...NIGHT },
+  { e: -0.08, top: mix(P.base, P.s1, 0.5), mid: mix(P.s1, P.mauve, 0.3), hor: mix(P.mauve, P.pink, 0.35).lerp(P.s1, 0.4), glow: mix(P.pink, P.peach, 0.4),
+    disc: P.peach, light: P.pink, lightI: 0, hemi: mix(P.lav, P.mauve, 0.4), hemiI: 0.85, cloud: mix(P.mauve, P.s2, 0.45), mist: mix(P.o0, P.mauve, 0.25),
+    water: mix(P.s1, P.mauve, 0.2), fogD: 0.00065, stars: 0.45, win: 0.95, snow: 0.25 },
+  { e: 0.06, top: mix(L.lav, L.base, 0.5), mid: mix(L.pink, L.base, 0.6), hor: mix(L.rose, L.base, 0.55), glow: mix(L.peach, L.base, 0.4),
+    disc: mix(L.yellow, L.base, 0.3), light: mix(L.peach, L.base, 0.55), lightI: 2.1, hemi: mix(L.pink, L.base, 0.5), hemiI: 1.35,
+    cloud: mix(L.pink, L.base, 0.6), mist: L.base, water: mix(L.lav, L.base, 0.5), fogD: 0.00045, stars: 0.08, win: 0.5, snow: 0.2 },
+  { e: 0.3, top: mix(L.blue, L.base, 0.55), mid: mix(L.sky, L.base, 0.72), hor: L.base, glow: L.base, disc: L.base,
+    light: mix(L.base, L.yellow, 0.08), lightI: 2.3, hemi: L.base, hemiI: 1.45, cloud: L.base, mist: L.base, water: mix(L.sky, L.base, 0.55),
+    fogD: 0.00034, stars: 0, win: 0.05, snow: 0.08 },
+  { e: 1, top: mix(L.blue, L.base, 0.45), mid: mix(L.sky, L.base, 0.65), hor: L.base, glow: L.base, disc: L.base,
+    light: L.base, lightI: 2.4, hemi: L.base, hemiI: 1.5, cloud: L.base, mist: L.base, water: mix(L.sky, L.base, 0.5),
+    fogD: 0.0003, stars: 0, win: 0, snow: 0.06 },
+];
+
+const grass = mix(L.green, L.base, 0.42), riser = mix(L.rose, L.s1, 0.45).lerp(L.base, 0.2), sand = mix(L.rose, L.base, 0.6), rock = mix(L.s1, L.o0, 0.3);
+const lavA = mix(L.lav, L.mauve, 0.45).lerp(L.base, 0.3), meadow = mix(L.green, L.yellow, 0.25).lerp(L.base, 0.5);
+const isLavender = (x, z) => {
+  const r = Math.hypot(x, z);
+  return r > 760 && r < 1250 && Math.sin((x * 0.6 + z * 0.8) * 0.33 + fbm(x * 0.004, z * 0.004, 2) * 6) > 0.1 && fbm(x * 0.003 + 7, z * 0.003, 3) > -0.1;
+};
+
+const W = createWorld({
+  seed: 424242, height, keys: KEYS, tod: 0.7,
+  terrain: { size: 3800, seg: 480, color(x, y, z, up, c) {
+    const r = Math.hypot(x, z);
+    if (y < -1) c.copy(mix(L.s0, L.sky, 0.15));
+    else if (y < 3) c.copy(sand);
+    else {
+      c.copy(grass).lerp(meadow, 0.5 * (fbm(x * 0.01, z * 0.01, 2) * 0.5 + 0.5));
+      if (up > 0.85 && isLavender(x, z)) c.copy(lavA);
+    }
+    if (r < 480) c.lerp(riser, smooth(0.86, 0.6, up));
+    if (r < 650 && y > 3) c.lerp(mix(L.pink, L.base, 0.6), 0.35 * smooth(-0.1, 0.5, fbm(x * 0.02 + 3, z * 0.02, 3)) * smooth(650, 400, r));
+    c.lerp(rock, smooth(0.75, 0.5, up) * smooth(20, 80, y));
+    const sn = smooth(380, 460, y + 30 * fbm(x * 0.01, z * 0.01, 2));
+    c.lerp(L.base, sn);
+    return sn * 0.6;
+  } },
+  water: { radius: 2200 },
+  path: (t) => { const a = t * 0.0055, r = 565 + 45 * Math.sin(t * 0.008 + 1); return [Math.cos(a) * r, Math.sin(a) * r]; },
+  center: new THREE.Vector3(0, 180, 0), hover: [70, 50], centerPull: 0.32,
+  houseTones: {
+    walls: [mix(L.base, L.rose, 0.12), L.mantle, mix(L.base, L.yellow, 0.1), mix(L.base, L.pink, 0.08), L.base],
+    roofs: [mix(L.o2, L.text, 0.3), mix(L.maroon, L.o2, 0.5), mix(L.blue, L.o2, 0.6), mix(L.teal, L.o2, 0.6), mix(L.rose, L.o2, 0.45)],
+  },
+  bloom: { threshold: 0.95, day: 0.25, night: 0.6 },
+  groundLight: mix(P.mantle, P.s0, 0.5), moonI: 0.6,
+});
+const { rnd, scene, SOLID, GLOW, DIM, place, tinted, plain, gable, toWorld, groundMin, groundRange, house, addLight, glowMat, keepClear, SIGHTS, animators, wakeSources, slopeAt } = W;
+
+// ---------- East Asian building kit: curved tiled roofs with upturned eaves, plaster and timber, stone plinths ----------
+const ROOF = [];                                  // roofs are open shells: drawn double-sided
+const C_ = {
+  wall: [L.base, mix(L.base, L.rose, 0.08), mix(L.base, L.yellow, 0.06), L.mantle],
+  timber: mix(L.text, L.rose, 0.2).lerp(L.o2, 0.2), stone: mix(L.s1, L.o0, 0.35),
+  tile: [mix(L.text, L.o2, 0.35), mix(L.text, L.blue, 0.25).lerp(L.o2, 0.3), mix(L.teal, L.o2, 0.5), mix(L.text, L.o2, 0.5)],
+  red: mix(L.red, L.maroon, 0.35).lerp(L.o2, 0.15), gold: mix(L.yellow, L.base, 0.2),
+};
+// hip roof over a w×d footprint (ridge along the longer side), concave slopes, eaves lifting at the corners
+function curvedRoof(w, d, h, over = 2, lift = 1.5, seg = 14) {
+  const long = w >= d, W = (long ? w : d) + over * 2, D = (long ? d : w) + over * 2, ridge = Math.max(0, (W - D) / 2);
+  const g = new THREE.PlaneGeometry(W, D, seg, seg).rotateX(-Math.PI / 2), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const rx = Math.min(1, Math.max(0, Math.abs(x) - ridge) / (D / 2)), rz = Math.min(1, Math.abs(z) / (D / 2)), m = Math.max(rx, rz);
+    p.setY(i, h * Math.pow(1 - m, 1.45) + lift * Math.pow(rx * rz, 2.2) + lift * 0.25 * Math.pow(m, 6));
+  }
+  if (!long) g.rotateY(Math.PI / 2);
+  g.computeVertexNormals();
+  return { g, ridgeLen: ridge * 2, long };
+}
+function roofAt(w, d, h, over, lift, color, x, y, z, ry) {
+  const { g, ridgeLen, long } = curvedRoof(w, d, h, over, lift);
+  ROOF.push(place(tinted(g, color), x, y, z, ry));
+  if (ridgeLen > 0.5) SOLID.push(place(tinted(new THREE.BoxGeometry(long ? ridgeLen + 0.6 : 0.7, 0.7, long ? 0.7 : ridgeLen + 0.6).translate(0, y - y + h + 0.25, 0), C_.tile[0]), x, y, z, ry));
+}
+// a townhouse: stone plinth, white plaster walls with dark timber posts and beams, glowing paper screens,
+// one or two storeys with a skirt roof between them
+function minka(x, z, ry, w, d, opts = {}) {
+  const [lo, hi] = groundRange(x, z, ry, w + 1.5, d + 1.5), base = lo - 0.6, plinth = hi - lo + 1.4;
+  const wall = opts.wall || C_.wall[(rnd() * C_.wall.length) | 0], tile = opts.tile || C_.tile[(rnd() * C_.tile.length) | 0];
+  const two = opts.two ?? rnd() < 0.3, H1 = 5.2;
+  SOLID.push(place(tinted(new THREE.BoxGeometry(w + 1.2, plinth, d + 1.2).translate(0, plinth / 2, 0), C_.stone), x, base, z, ry));
+  let y = plinth;
+  const storey = (sw, sd, sh, y0) => {
+    SOLID.push(place(tinted(new THREE.BoxGeometry(sw, sh, sd).translate(0, y0 + sh / 2, 0), wall), x, base, z, ry));
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) SOLID.push(place(tinted(new THREE.BoxGeometry(0.45, sh, 0.45).translate(sx * sw / 2, y0 + sh / 2, sz * sd / 2), opts.posts || C_.timber), x, base, z, ry));
+    for (const by of [y0 + sh * 0.62, y0 + sh - 0.2]) SOLID.push(place(tinted(new THREE.BoxGeometry(sw + 0.12, 0.35, sd + 0.12).translate(0, by, 0), C_.timber), x, base, z, ry));
+    const nw = Math.max(1, Math.round(sw / 4.5));
+    for (const sz of [1, -1]) for (let k = 0; k < nw; k++) {
+      if (rnd() < 0.18) continue;
+      const cx = (k - (nw - 1) / 2) * (sw / nw), pg = new THREE.PlaneGeometry(sw / nw * 0.62, sh * 0.42).rotateY(sz > 0 ? 0 : Math.PI).translate(cx, y0 + sh * 0.33, sz * (sd / 2 + 0.04));
+      (rnd() < 0.3 ? DIM : GLOW).push(place(plain(pg), x, base, z, ry));
+    }
+  };
+  if (two) {
+    storey(w, d, H1, y);
+    roofAt(w, d, 1.1, 1.5, 0.5, tile, x, base + y + H1 - 0.1, z, ry);         // skirt roof
+    storey(w * 0.72, d * 0.72, 4, y + H1 + 0.5);
+    roofAt(w * 0.72, d * 0.72, 3.2, 1.9, 1.4, tile, x, base + y + H1 + 4.4, z, ry);
+  } else {
+    storey(w, d, H1, y);
+    roofAt(w, d, 3.6, 2, 1.4, tile, x, base + y + H1 - 0.1, z, ry);
+  }
+  if (rnd() < 0.25 && W.smokeSources.length < 8) W.smokeSources.push(toWorld(w * 0.25, plinth + H1 + 4, 0, x, base, z, ry));
+}
+
+// paper-lantern materials: pale paper by day, glowing at night
+const lanternPink = glowMat(P.pink, 0.55, 3.2), lanternPeach = glowMat(P.peach, 0.5, 3.0);
+const lanternGeo = new THREE.CylinderGeometry(0.9, 0.9, 1.7, 8);
+const placed = [];
+
+// ---------- hilltop temple: five-storey pagoda and a main hall ----------
+{
+  const top = height(0, 0);
+  // pagoda, slightly off the summit
+  const px = -14, pz = 8;
+  let y = top - 1.5;
+  SOLID.push(tinted(new THREE.BoxGeometry(16, 3, 16).translate(px, y + 1.5, pz), C_.stone)); y += 3;
+  for (let i = 0; i < 5; i++) {
+    const w = 11 - i * 1.5, hgt = i ? 3.8 : 5;
+    SOLID.push(tinted(new THREE.BoxGeometry(w, hgt, w).translate(px, y + hgt / 2, pz), C_.wall[0]));
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) SOLID.push(tinted(new THREE.BoxGeometry(0.6, hgt, 0.6).translate(px + sx * w / 2, y + hgt / 2, pz + sz * w / 2), C_.red));
+    for (let k = 0; k < 4; k++) GLOW.push(plain(new THREE.PlaneGeometry(w * 0.35, hgt * 0.45).translate(0, hgt * 0.45, w / 2 + 0.05).rotateY(k * Math.PI / 2).translate(px, y, pz)));
+    y += hgt;
+    roofAt(w, w, 2.2, 2.6, 1.8, C_.tile[0], px, y - 0.2, pz, 0);
+    y += 1.2;
+  }
+  SOLID.push(tinted(new THREE.CylinderGeometry(0.25, 0.35, 10, 6).translate(px, y + 5, pz), C_.gold));
+  for (let k = 0; k < 6; k++) SOLID.push(tinted(new THREE.TorusGeometry(0.75, 0.16, 4, 10).rotateX(Math.PI / 2).translate(px, y + 2.5 + k * 1.1, pz), C_.gold));
+  // main hall on a stone terrace, red pillars, two-tier roof
+  const hx = 16, hz = -8, hb = groundMin(hx, hz, 0, 26, 18) - 1;
+  SOLID.push(tinted(new THREE.BoxGeometry(28, top - hb + 1.5, 20).translate(hx, (top + hb) / 2 + 0.25, hz), C_.stone));
+  const hy = top + 1;
+  SOLID.push(tinted(new THREE.BoxGeometry(20, 7, 12).translate(hx, hy + 3.5, hz), C_.wall[0]));
+  for (let k = 0; k < 7; k++) for (const sz of [-1, 1]) SOLID.push(tinted(new THREE.CylinderGeometry(0.45, 0.45, 7.5, 8).translate(hx - 10.5 + k * 3.5, hy + 3.75, hz + sz * 7.5), C_.red));
+  for (let k = 0; k < 5; k++) GLOW.push(plain(new THREE.PlaneGeometry(2.4, 3.6).translate(hx - 7 + k * 3.5, hy + 2.8, hz + 6.05)));
+  roofAt(23, 16, 1.6, 2.2, 0.8, C_.tile[0], hx, hy + 7.4, hz, 0);
+  SOLID.push(tinted(new THREE.BoxGeometry(16, 3, 9).translate(hx, hy + 10, hz), C_.wall[0]));
+  roofAt(16, 9, 5, 2.6, 2.2, C_.tile[0], hx, hy + 11.4, hz, 0);
+  for (const [lx, lz] of [[-12, 10], [12, 10], [-12, -10], [12, -10]]) scene.add(new THREE.Mesh(lanternGeo, lanternPink).translateX(hx + lx).translateY(hy + 2).translateZ(hz + lz));
+  addLight(P.pink, 500, 80, 0, top + 12, 0);
+  placed.push({ x: px, z: pz, r: 12 }, { x: hx, z: hz, r: 17 });
+  keepClear.push({ x: 0, z: 0, r: 36 });
+}
+
+// ---------- hamlets: tight clusters of townhouses on the terraces ----------
+{
+  const centers = [];
+  for (let i = 0; i < 8000 && centers.length < 15; i++) {
+    const a = rnd() * 6.28, r = 70 + rnd() * 300, x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (h < 12 || slopeAt(x, z, 4) > 0.3) continue;
+    if (centers.some((c) => Math.hypot(c.x - x, c.z - z) < 75) || placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 30)) continue;
+    centers.push({ x, z });
+  }
+  for (const c of centers) {
+    const want = 10 + ((rnd() * 9) | 0), cry = Math.atan2(c.x, c.z) + (rnd() - 0.5) * 0.3;   // the cluster shares one orientation, facing down-hill
+    let n = 0;
+    for (let i = 0; i < 900 && n < want; i++) {
+      const a = rnd() * 6.28, d = n ? 11 + Math.sqrt(rnd()) * 36 : 0, x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
+      if (height(x, z) < 8) continue;
+      const w = 11 + rnd() * 5, dd = 8.5 + rnd() * 3, rr = Math.hypot(w, dd) * 0.5, ry = cry + (rnd() < 0.35 ? Math.PI / 2 : 0) + (rnd() - 0.5) * 0.12;
+      if (placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + rr + 1.2)) continue;
+      const [glo, ghi] = groundRange(x, z, ry, w, dd); if (ghi - glo > 4.5) continue;   // footprint must sit on one terrace
+      minka(x, z, ry, w, dd);
+      placed.push({ x, z, r: rr }); n++;
+    }
+    c.n = n;
+  }
+}
+
+// ---------- lantern stairway spiralling up the hill, with a red gate at the foot ----------
+{
+  const posts = [], a0 = 0.4;
+  let prev = null, nLights = 0, gate = null;
+  for (let s = 0; s <= 1; s += 0.0015) {
+    const a = a0 + s * Math.PI * 4, r = 400 * (1 - s) + 22, x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (!gate && h > 4) gate = { x, z, h, a };
+    if (prev && Math.hypot(x - prev.x, z - prev.z) < 15) continue;
+    prev = { x, z };
+    if (h < 2 || placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 1)) continue;
+    SOLID.push(tinted(new THREE.CylinderGeometry(0.15, 0.2, 4, 5).translate(x, h + 2, z), C_.timber));
+    posts.push(lanternGeo.clone().translate(x, h + 4.6, z));
+    if (posts.length % 9 === 0 && nLights < 6) { addLight(mix(P.peach, P.pink, 0.4), 220, 40, x, h + 6, z); nLights++; }
+  }
+  scene.add(new THREE.Mesh(mergeGeometries(posts.filter((_, i) => i % 2 === 0)), lanternPink));
+  scene.add(new THREE.Mesh(mergeGeometries(posts.filter((_, i) => i % 2 === 1)), lanternPeach));
+  if (gate) {
+    const { x, z, h } = gate, ry = gate.a + Math.PI / 2 * 0;          // gate spans the path: posts either side, across the radial direction
+    const ux = Math.cos(gate.a), uz = Math.sin(gate.a), tx = -uz, tz = ux;
+    for (const s of [-1, 1]) SOLID.push(tinted(new THREE.CylinderGeometry(0.7, 0.8, 13, 10).translate(x + tx * s * 6, h + 6.5, z + tz * s * 6), C_.red));
+    const beam = (len, th, y, col) => SOLID.push(place(tinted(new THREE.BoxGeometry(len, th, 1.3).translate(0, y, 0), col), x, h, z, Math.atan2(tx, tz) - Math.PI / 2));
+    beam(17, 1.1, 13.2, C_.tile[0]); beam(15.5, 0.9, 12.3, C_.red); beam(13, 0.8, 9.6, C_.red);
+    SIGHTS.push(new THREE.Vector3(x, h + 8, z));
+  }
+}
+
+// ---------- lakeside pavilion with hanging lanterns ----------
+{
+  const s = W.findSpot({ a: 2.4, spread: 0.4, rMin: 360, rMax: 470, hMin: 2, hMax: 10, flatR: 10 });
+  if (s) {
+    const { x, z } = s, ry = Math.atan2(x, z), base = groundMin(x, z, ry, 14, 14) - 0.3;
+    SOLID.push(place(tinted(new THREE.BoxGeometry(14, 1, 14).translate(0, 0.5, 0), C_.stone), x, base, z, ry));
+    for (const [px, pz] of [[-5.5, -5.5], [5.5, -5.5], [-5.5, 5.5], [5.5, 5.5]]) SOLID.push(place(tinted(new THREE.CylinderGeometry(0.4, 0.4, 7).translate(px, 4.5, pz), C_.red), x, base, z, ry));
+    roofAt(11, 11, 3.8, 2.6, 2.2, C_.tile[2], x, base + 8, z, ry);
+    for (const [px, pz] of [[-5.5, -5.5], [5.5, -5.5], [-5.5, 5.5], [5.5, 5.5]]) { const p = toWorld(px, 6.4, pz, x, base, z, ry); scene.add(new THREE.Mesh(lanternGeo, lanternPink).translateX(p.x).translateY(p.y).translateZ(p.z)); }
+    const lp = toWorld(0, 6, 0, x, base, z, ry); addLight(P.pink, 300, 45, lp.x, lp.y, lp.z);
+    keepClear.push({ x, z, r: 16 }); placed.push({ x, z, r: 9 }); SIGHTS.push(new THREE.Vector3(x, base + 5, z));
+  }
+}
+
+// ---------- farm hamlets among the lavender across the lake ----------
+for (const a of [1.2, 3.3, 4.6, 5.6]) {
+  const s = W.findSpot({ a, spread: 0.35, rMin: 790, rMax: 900, hMin: 4, hMax: 50, flatR: 20 });
+  if (!s) continue;
+  const cry = Math.atan2(-s.x, -s.z);
+  for (let i = 0, n = 0; i < 300 && n < 6; i++) {
+    const aa = rnd() * 6.28, d = n ? 9 + rnd() * 22 : 0, x = s.x + Math.cos(aa) * d, z = s.z + Math.sin(aa) * d;
+    if (height(x, z) < 3 || slopeAt(x, z) > 0.5 || placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 7)) continue;
+    minka(x, z, cry + (rnd() < 0.3 ? Math.PI / 2 : 0), 8 + rnd() * 3, 6.5 + rnd() * 2, { two: false });
+    placed.push({ x, z, r: 6 }); n++;
+  }
+  keepClear.push({ x: s.x, z: s.z, r: 45 });
+  SIGHTS.push(Object.assign(new THREE.Vector3(s.x, s.h + 6, s.z), { lead: 0.55, pull: 0.7 }));
+}
+scene.add(new THREE.Mesh(mergeGeometries(ROOF), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide })));
+
+// ---------- trees: sakura with wide cloudy canopies on crooked dark trunks; round greens and pines further out ----------
+{
+  const bark = mix(L.text, L.rose, 0.2).lerp(L.o2, 0.15);
+  const pinks = [mix(L.pink, L.base, 0.55), mix(L.pink, L.base, 0.68), mix(L.flam, L.base, 0.5), mix(L.pink, L.base, 0.78), mix(L.pink, L.rose, 0.4).lerp(L.base, 0.55)];
+  function sakuraGeo(seedOff) {
+    const r = (k) => { const v = Math.sin(seedOff * 91.7 + k * 12.9898) * 43758.5453; return v - Math.floor(v); };
+    const parts = [tinted(new THREE.CylinderGeometry(0.07, 0.12, 0.55, 6).translate(0, 0.27, 0).rotateZ((r(1) - 0.5) * 0.25), bark)];
+    const nb = 4;
+    for (let b = 0; b < nb; b++) {
+      const a = b / nb * 6.28 + r(b + 2) * 0.8, tilt = 0.7 + r(b + 7) * 0.35;
+      parts.push(tinted(new THREE.CylinderGeometry(0.035, 0.06, 0.55, 5).translate(0, 0.27, 0).rotateZ(tilt).rotateY(a).translate(0, 0.45, 0), bark));
+    }
+    const clumps = [[0, 0.9, 0, 0.46], [0, 1.08, 0, 0.3]];
+    for (let k = 0; k < 8; k++) { const a = k / 8 * 6.28 + r(k + 20), d = 0.3 + r(k + 30) * 0.2; clumps.push([Math.cos(a) * d, 0.68 + r(k + 40) * 0.2, Math.sin(a) * d, 0.27 + r(k + 50) * 0.1]); }
+    for (let k = 0; k < clumps.length; k++) {
+      const [cx, cy, cz, cs] = clumps[k];
+      parts.push(tinted(new THREE.IcosahedronGeometry(cs, 1).scale(1, 0.78, 1).translate(cx, cy, cz), pinks[(k + seedOff) % pinks.length]));
+    }
+    return mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
+  }
+  const sakuraMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const sakura = [0, 1, 2].map((k) => new THREE.InstancedMesh(sakuraGeo(k + 1), sakuraMat, 1300));
+  const trunkGeo = new THREE.CylinderGeometry(0.08, 0.12, 1, 5).translate(0, 0.5, 0);
+  const crownGeo = new THREE.IcosahedronGeometry(1, 0).scale(1, 0.85, 1).translate(0, 1.25, 0);
+  const pineGeo = mergeGeometries([new THREE.ConeGeometry(0.36, 0.55, 7).translate(0, 0.38, 0), new THREE.ConeGeometry(0.26, 0.45, 7).translate(0, 0.68, 0)].map((g) => g.toNonIndexed()));
+  const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: bark, flatShading: true }), 5000);
+  const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshLambertMaterial({ flatShading: true }), 5000);
+  const pines = new THREE.InstancedMesh(pineGeo, new THREE.MeshLambertMaterial({ flatShading: true }), 4000);
+  const greens = [mix(L.green, L.base, 0.45), mix(L.green, L.teal, 0.4).lerp(L.base, 0.45), mix(L.green, L.yellow, 0.3).lerp(L.base, 0.5)];
+  const pineC = [mix(L.teal, L.o2, 0.55), mix(L.green, L.o2, 0.6), mix(L.teal, L.text, 0.5)];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), e = new THREE.Euler(), cc = new THREE.Color();
+  const ns = [0, 0, 0]; let ng = 0, np = 0;
+  for (let i = 0; i < 140000; i++) {
+    const a = rnd() * 6.28, r = 25 + Math.sqrt(rnd()) * 1350, x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (h < 3 || h > 330 || slopeAt(x, z, 3) > 0.8) continue;
+    if (placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 4)) continue;
+    if (keepClear.some((c) => Math.hypot(c.x - x, c.z - z) < c.r * 0.8)) continue;
+    if (isLavender(x, z) && rnd() < 0.97) continue;
+    const town = r < 470, grove = fbm(x * 0.011 + 31, z * 0.011, 3);
+    if (town && grove < -0.02 && rnd() < 0.93) continue;               // sakura in groves between the hamlets, open terraces elsewhere
+    const cherry = town ? rnd() < 0.92 : r < 640 ? (grove > 0 && rnd() < 0.7) : rnd() < 0.05;
+    const pine = !town && !cherry && (r > 1000 || fbm(x * 0.006, z * 0.006, 2) > 0.25) && rnd() < 0.7;
+    q.setFromEuler(e.set(0, rnd() * 6.28, 0));
+    if (cherry) {
+      const k = (rnd() * 3) | 0; if (ns[k] >= 1300) continue;
+      const sc = (town ? 7.5 : 9) + rnd() * 4; m.compose(v.set(x, h - 0.5, z), q, s.set(sc * (0.95 + rnd() * 0.2), sc * (0.85 + rnd() * 0.2), sc));
+      sakura[k].setMatrixAt(ns[k], m); sakura[k].setColorAt(ns[k], cc.setScalar(0.92 + rnd() * 0.12)); ns[k]++;
+    } else if (pine) {
+      if (np >= 4000) continue;
+      const ht = 14 + rnd() * 12; m.compose(v.set(x, h - 1, z), q, s.set(ht, ht, ht)); pines.setMatrixAt(np, m); pines.setColorAt(np, pineC[(rnd() * 3) | 0]); np++;
+    } else {
+      if (ng >= 5000) continue;
+      const ht = 9 + rnd() * 7, cw = 3.8 + rnd() * 2.2;
+      m.compose(v.set(x, h - 0.4, z), q, s.set(1, ht * 0.55, 1)); trunks.setMatrixAt(ng, m);
+      m.compose(v.set(x, h - 0.4 + ht * 0.55 - cw * 0.9, z), q, s.set(cw, cw, cw)); crowns.setMatrixAt(ng, m); crowns.setColorAt(ng, greens[(rnd() * 3) | 0]); ng++;
+    }
+    if (ns[0] + ns[1] + ns[2] >= 3900 && ng >= 5000 && np >= 4000) break;
+  }
+  sakura.forEach((mesh, k) => { mesh.count = ns[k]; scene.add(mesh); });
+  trunks.count = crowns.count = ng; pines.count = np;
+  scene.add(trunks, crowns, pines);
+}
+
+// ---------- floating lanterns on the lake, sky lanterns rising at night ----------
+{
+  const items = [];
+  for (let i = 0; i < 3000 && items.length < 90; i++) {
+    const a = rnd() * 6.28, r = 380 + rnd() * 300, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (height(x, z) > -3) continue;
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 1.1, 6), rnd() < 0.5 ? lanternPink : lanternPeach);
+    mesh.position.set(x, 0.5, z); scene.add(mesh); items.push({ mesh, a, r, ph: rnd() * 6.28, sp: (0.4 + rnd() * 0.6) * (rnd() < 0.5 ? 1 : -1) * 0.0008 });
+  }
+  const sky = [];
+  for (let i = 0; i < 26; i++) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.8, 1.8, 6), lanternPeach);
+    mesh.visible = false; scene.add(mesh); sky.push({ mesh, k: rnd(), a: rnd() * 6.28, r: 30 + rnd() * 300, sp: 0.006 + rnd() * 0.006, drift: rnd() * 6.28 });
+  }
+  animators.push((t, night, dt) => {
+    for (const it of items) {
+      it.a += it.sp * dt * 10; const x = Math.cos(it.a) * it.r, z = Math.sin(it.a) * it.r;
+      if (height(x, z) < -2) it.mesh.position.set(x, 0.5 + Math.sin(t * 1.3 + it.ph) * 0.12, z); else it.sp = -it.sp;
+    }
+    const show = night > 0.5;
+    for (const s of sky) {
+      s.mesh.visible = show; if (!show) continue;
+      s.k = (s.k + s.sp * dt) % 1;
+      const x0 = Math.cos(s.a) * s.r, z0 = Math.sin(s.a) * s.r, y0 = height(x0, z0) + 6;
+      s.mesh.position.set(x0 + Math.sin(s.drift + s.k * 4) * 40 * s.k + s.k * 120, y0 + s.k * 520, z0 + Math.cos(s.drift + s.k * 3) * 40 * s.k);
+      const sc = 1 - smooth(0.75, 1, s.k); s.mesh.scale.setScalar(sc);
+    }
+  });
+}
+
+// ---------- sampans: long hulls with upturned ends, an arched woven canopy, a boatman poling at the stern ----------
+function sampan() {
+  const g = new THREE.Group(), flat = (c, side) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, side: side || THREE.FrontSide });
+  const wood = flat(mix(L.text, L.rose, 0.3).lerp(L.o2, 0.2)), straw = flat(mix(L.yellow, L.rose, 0.4).lerp(L.o2, 0.3), THREE.DoubleSide);
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 10, 6, 1).rotateZ(Math.PI / 2).scale(1, 0.45, 1), wood));       // hull, forward is +x
+  for (const s of [1, -1]) g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.1, 3.2, 6, 1).rotateZ(-s * Math.PI / 2).rotateZ(s * 0.32).scale(1, 0.55, 0.9).translate(s * 6, 0.45, 0), wood));
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.45, 4.4, 10, 1, true, 0, Math.PI).rotateZ(Math.PI / 2).translate(-0.3, 0.4, 0), straw));   // arched canopy
+  const man = new THREE.Group(); man.position.set(-4.6, 0.4, 0);
+  man.add(new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.45, 2.4, 6).translate(0, 1.2, 0), flat(mix(L.blue, L.o2, 0.6))));
+  man.add(new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.55, 10).translate(0, 2.7, 0), straw));                                  // conical hat
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 9).translate(0, 4.5, 0), wood); pole.position.set(-0.6, -2.5, 0.5); pole.rotation.z = 0.45; man.add(pole);
+  g.add(man);
+  const lpole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2).translate(0, 1.6, 0), wood); lpole.position.set(5.4, 0.7, 0); lpole.rotation.z = -0.35; g.add(lpole);
+  const ln = new THREE.Mesh(lanternGeo, lanternPeach); ln.scale.setScalar(0.55); ln.position.set(6.4, 3.1, 0); g.add(ln);
+  const Lt = new THREE.PointLight(P.peach, 0, 35, 1.6); Lt.position.set(6.4, 3.6, 0); g.add(Lt); W.lampLights.push({ L: Lt, I: 220 });
+  return { g, pole };
+}
+for (let i = 0; i < 4; i++) {
+  const { g, pole } = sampan();
+  g.userData.moving = true; scene.add(g); wakeSources.push({ obj: g, len: 11 });
+  let a = i * 1.57 + rnd(), r = 520 + rnd() * 80, dir = rnd() < 0.5 ? 1 : -1, heading = null;
+  animators.push((t, night, dt) => {
+    const na = a + dir * 0.012 * dt, x = Math.cos(na) * r, z = Math.sin(na) * r;
+    if (height(x, z) > -3) { dir = -dir; r = Math.min(640, Math.max(470, r + (rnd() - 0.5) * 30)); return; }
+    a = na; g.position.set(x, 0.45 + Math.sin(t * 1.2 + i) * 0.12, z);
+    // forward (+x) along the direction of travel, the tangent of the circle; turn smoothly when it reverses
+    const target = Math.atan2(-dir * Math.cos(a), -dir * Math.sin(a));
+    if (heading === null) heading = target;
+    let dh = target - heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh)); heading += dh * Math.min(1, dt * 0.6);
+    g.rotation.set(Math.sin(t * 0.9 + i) * 0.03, heading, 0);
+    pole.rotation.z = 0.45 + 0.18 * Math.sin(t * 0.8 + i);              // the boatman pushes off with the pole
+  });
+}
+
+// ---------- mist over the lake, pink clouds, petals, birds, fireflies ----------
+for (let i = 0, k = 0; i < 4000 && k < 100; i++) {
+  const a = rnd() * 6.28, r = 400 + rnd() * 380, x = Math.cos(a) * r, z = Math.sin(a) * r;
+  if (height(x, z) > 2) continue;
+  W.drifter('mist', 0.12 + rnd() * 0.08, 220 + rnd() * 200, 45 + rnd() * 25, x, 9 + rnd() * 12, z, 0.004 + rnd() * 0.004, 0.95 + rnd() * 0.1); k++;
+}
+for (let i = 0; i < 30; i++) {
+  const a = rnd() * 6.28, r = 300 + rnd() * 900;
+  W.drifter('cloud', 0.14 + rnd() * 0.14, 320 + rnd() * 300, 70 + rnd() * 50, Math.cos(a) * r, 360 + rnd() * 160, Math.sin(a) * r, 0.005 + rnd() * 0.005, 0.9 + rnd() * 0.15);
+}
+W.particles({ count: 700, size: 1.5, color: mix(L.pink, L.base, 0.35), box: 300, fall: 2.2, sway: 3, dayScale: 1, nightScale: 0.3 });
+W.birds({ radius: 480, y: 260, color: mix(L.text, L.o2, 0.3) });
+{
+  const swarms = [];
+  for (let i = 0; i < 3000 && swarms.length < 10; i++) {
+    const a = rnd() * 6.28, r = 760 + rnd() * 300, x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (h < 5 || h > 150 || keepClear.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 40) || swarms.some((s) => Math.hypot(s.x - x, s.z - z) < 150)) continue;
+    swarms.push({ x, z, r: 30 });
+  }
+  W.fireflies(swarms, 12);
+}
+SIGHTS.push(new THREE.Vector3(0, height(0, 0) + 15, 0));
+
+W.finish();
+</script>
+</body></html>

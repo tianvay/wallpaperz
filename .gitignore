@@ -11,3 +11,6 @@ __pycache__/
 config.json
 wallpapers/_test/
 .claude/settings.local.json
+
+# brainstorming notes
+ideas.md
