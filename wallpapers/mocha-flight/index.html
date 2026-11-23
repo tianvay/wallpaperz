@@ -309,6 +309,7 @@ const keepClear = [];          // circles where no trees grow (village, campsite
 const smokeSources = [];
 const lampLights = [];         // point lights that come on at night: { L, I }
 const animators = [];
+const wakeSources = [];         // boats that ripple the water: { obj, len }, obj.userData.moving while under way
 const SIGHTS = [];             // landmarks the camera turns toward as it flies by          // per-frame callbacks (t, night, dt) for fires, beacons...
 const SOLID = [], GLOW = [], DIM = [];   // static geometry, merged into three meshes at the end
 // Best spot in a ring sector: within `spread` radians of angle `a` (or anywhere), height in range,
@@ -601,6 +602,7 @@ let boat = null;
       const lp = toWorld(1.8, 6.5, L - 3.5, sx, 0, sz, ry); addLight(P.peach, 250, 45, lp.x, lp.y, lp.z);
       const row = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 0.7, 8, 6, 1).rotateZ(Math.PI / 2).scale(1, 0.5, 1), new THREE.MeshLambertMaterial({ color: mix(P.maroon, P.s1, 0.55), flatShading: true }));
       row.position.copy(toWorld(-3.8, 0.5, L * 0.6, sx, 0, sz, ry)); row.rotation.y = ry + Math.PI / 2; scene.add(row);
+      wakeSources.push({ obj: row, len: 8 });
       animators.push((t) => { row.position.y = 0.5 + Math.sin(t * 1.1 + 1) * 0.2; row.rotation.x = Math.sin(t * 0.8) * 0.04; });
     }
     for (let i = 0; i < 400; i++) {
@@ -615,6 +617,7 @@ let boat = null;
         const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.45, 6, 4), winMat); lantern.position.set(-4.5, 1.6, 0); boat.add(lantern);
         const bl = new THREE.PointLight(P.peach, 0, 40, 1.6); bl.position.set(-4.5, 2.5, 0); boat.add(bl); lampLights.push({ L: bl, I: 300 });
         boat.position.set(x, 0.6, z); boat.rotation.y = rnd() * 6.28; scene.add(boat);
+        wakeSources.push({ obj: boat, len: 12 });
         break;
       }
     }
@@ -717,18 +720,85 @@ for (const hm of hamlets) {
   const dist = A.distanceTo(B);
   if (dist < 100) continue;
   const boat = ferryBoat([mix(P.maroon, P.s1, 0.55), mix(P.blue, P.s1, 0.6), mix(P.peach, P.s1, 0.6)][ferries.length % 3]);
-  scene.add(boat); ferries.push(boat);
+  scene.add(boat); ferries.push(boat); wakeSources.push({ obj: boat, len: 14 });
   const leg = dist / 5.5, pause = 20 + rnd() * 20, cycle = 2 * (leg + pause), ph = rnd() * cycle;
   let heading = Math.atan2(-(B.z - A.z), B.x - A.x);
   animators.push((t, night, dt) => {
     let c = (t + ph) % cycle, from = A, to = B;
     if (c > leg + pause) { c -= leg + pause; from = B; to = A; }
     boat.position.lerpVectors(from, to, smooth(0, leg, c));
+    boat.userData.moving = c > leg * 0.04 && c < leg * 0.96;
     boat.position.y = 0.6 + Math.sin(t * 1.2 + ph) * 0.2;
     const target = Math.atan2(-(to.z - from.z), to.x - from.x);
     let dh = target - heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     heading += dh * Math.min(1, dt * 0.4);                           // turn around slowly while docked
     boat.rotation.set(Math.sin(t * 0.9 + ph) * 0.03, heading, 0);
+  });
+}
+
+// ---------- ripples and wakes: expanding rings on the water around every boat ----------
+{
+  const MAX = 240;
+  const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const fade = new THREE.InstancedBufferAttribute(new Float32Array(MAX), 1);
+  geo.setAttribute('aFade', fade);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, fog: true,
+    uniforms: { color: { value: new THREE.Color() }, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+    vertexShader: `attribute float aFade; varying float vFade; varying vec2 vUv;
+      #include <common>
+      #include <fog_pars_vertex>
+      void main(){
+        vUv = uv; vFade = aFade;
+        vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `uniform vec3 color; varying float vFade; varying vec2 vUv;
+      #include <common>
+      #include <fog_pars_fragment>
+      void main(){
+        float r = length(vUv - 0.5) * 2.0;
+        float ring = smoothstep(0.6, 0.86, r) * smoothstep(1.0, 0.87, r) + 0.12 * smoothstep(0.9, 0.3, r);
+        float a = ring * vFade; if (a < 0.003) discard;
+        gl_FragColor = vec4(color, a);
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }`,
+  });
+  const mesh = new THREE.InstancedMesh(geo, mat, MAX);
+  mesh.frustumCulled = false; mesh.renderOrder = 1; scene.add(mesh);
+  const R = Array.from({ length: MAX }, () => ({ x: 0, z: 0, age: 1, life: 1, size: 0, grow: 0, str: 0 }));
+  let next = 0;
+  const emit = (x, z, size, grow, life, str) => { Object.assign(R[next], { x, z, age: 0, life, size, grow, str }); next = (next + 1) % MAX; };
+  const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), scl = new THREE.Vector3(), q0 = new THREE.Quaternion(), v = new THREE.Vector3();
+  animators.push((t, night, dt) => {
+    // emitters: moving boats leave a trail from the stern and a small bow wave; idle ones ring gently as they bob
+    for (const w of wakeSources) {
+      const moving = w.obj.userData.moving;
+      w.timer = (w.timer ?? Math.random() * 2) - dt;
+      if (w.timer > 0) continue;
+      if (moving) {
+        v.set(-w.len * 0.5, 0, 0); w.obj.localToWorld(v); emit(v.x, v.z, w.len * 0.25, w.len * 1.3, 5.5, 0.65);
+        v.set(w.len * 0.45, 0, 0); w.obj.localToWorld(v); emit(v.x, v.z, w.len * 0.15, w.len * 0.45, 1.6, 0.55);
+        w.timer = 0.28;
+      } else {
+        emit(w.obj.position.x, w.obj.position.z, w.len * 0.55, w.len * 0.9, 4.5, 0.45);
+        w.timer = 1.8 + Math.random() * 0.8;
+      }
+    }
+    for (let i = 0; i < MAX; i++) {
+      const r = R[i];
+      if (r.age < r.life) {
+        r.age += dt;
+        const k = Math.min(1, r.age / r.life), s = r.size + r.grow * (1 - (1 - k) * (1 - k));
+        fade.array[i] = r.str * Math.pow(1 - k, 1.5) * Math.min(1, k * 8);
+        m4.compose(pos.set(r.x, 0.12, r.z), q0, scl.set(s, 1, s));
+      } else { fade.array[i] = 0; m4.compose(pos.set(0, -50, 0), q0, scl.set(0.001, 1, 0.001)); }
+      mesh.setMatrixAt(i, m4);
+    }
+    mesh.instanceMatrix.needsUpdate = true; fade.needsUpdate = true;
+    mat.uniforms.color.value.copy(cur.mist).lerp(P.text, 0.3);
   });
 }
 
