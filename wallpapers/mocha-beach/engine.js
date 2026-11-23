@@ -281,9 +281,20 @@ void main(){
     pulse(e) {
       const im = new Image(); im.src = e.src;
       return { add: !!e.add, draw(T) { if (!im.complete || !im.naturalWidth) return;
-        const k = 0.5 + 0.5 * Math.sin(T * (e.speed || 0.5));
-        ctx.globalAlpha = (e.min || 0) + ((e.max ?? 1) - (e.min || 0)) * k * k;
-        ctx.drawImage(im, e.x || 0, e.y || 0); } };
+        const lo = e.min || 0, hi = e.max ?? 1, x0 = e.x || 0, y0 = e.y || 0;
+        if (!e.wave) {
+          const k = 0.5 + 0.5 * Math.sin(T * (e.speed || 0.5));
+          ctx.globalAlpha = lo + (hi - lo) * k * k; ctx.drawImage(im, x0, y0); return;
+        }
+        // wave: brightness travels along x in soft swells (foam washing in along the shore)
+        const sw = 24, W2 = im.naturalWidth, H2 = im.naturalHeight, len = e.wave.length || 700, dir = e.wave.dir || 1;
+        for (let x = 0; x < W2; x += sw) {
+          const ph = (x / len) * 6.283 * dir - T * (e.speed || 0.5);
+          const k = Math.pow(0.5 + 0.5 * Math.sin(ph), 3);
+          if (k < 0.02) continue;
+          ctx.globalAlpha = lo + (hi - lo) * k;
+          ctx.drawImage(im, x, 0, Math.min(sw + 1, W2 - x), H2, x0 + x, y0, Math.min(sw + 1, W2 - x), H2);
+        } } };
     },
     // individual windows switching off and on  {items:[[x,y,w,h,'#facade']], off:0.1, onTime:[min,max], offTime:[min,max]}
     // with {src}: items are [x,y,w,h] boxes and "off" shows that exact patch of the inpainted lights-off image

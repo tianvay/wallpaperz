@@ -136,7 +136,7 @@ def beach():
         layers={'foam.png': (soft(foam, 1.2), 780, 1440, 0.35)},
         scene=dict(effects=[
             dict(type='clouds', y0=140, y1=560, count=6, size=1.6, speed=0.7, alpha=0.6, colors=['rosewater', 'text', 'lavender']),
-            dict(type='pulse', src='foam.png', y=780, min=0, max=0.55, speed=0.45),
+            dict(type='pulse', src='foam.png', y=780, min=0, max=0.6, speed=0.55, wave=dict(length=900, dir=-1)),   # swells run along the shore
             dict(type='streaks', points=sample(sea_in, 1200, 3), colors=['text', 'sky', 'lavender'], count=40, len=110, speed=5, alpha=0.28),
             dict(type='birds', y0=230, y1=480, count=4, color='surface0', alpha=0.55),
             dict(type='sailboat', y=785, x0=60, x1=690, speed=3, color='surface0', alpha=0.7),
