@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "wallpapers", "runtimeExecutable": "python", "runtimeArgs": ["-m", "http.server", "8767", "--bind", "127.0.0.1", "--directory", "C:/_wallpaperz/wallpapers"], "port": 8767 }
+  ]
+}

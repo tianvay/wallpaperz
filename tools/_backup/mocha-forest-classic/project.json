@@ -1,0 +1,20 @@
+{
+  "file": "index.html",
+  "preview": "preview.jpg",
+  "title": "Mocha Forest (animated)",
+  "type": "web",
+  "description": "Catppuccin Mocha forest with drifting clouds, twinkling stars, flowing waterfall, river glints and fireflies.",
+  "general": {
+    "supportsaudioprocessing": false,
+    "properties": {
+      "schemecolor": { "order": 0, "text": "ui_browse_properties_scheme_color", "type": "color", "value": "0.118 0.118 0.180" },
+      "clouds": { "order": 1, "text": "Drifting clouds", "type": "bool", "value": true },
+      "cloudspeed": { "order": 2, "text": "Cloud speed", "type": "slider", "min": 0.2, "max": 4, "precision": 1, "fraction": true, "value": 1 },
+      "stars": { "order": 3, "text": "Twinkling stars", "type": "bool", "value": true },
+      "waterfall": { "order": 4, "text": "Waterfall", "type": "bool", "value": true },
+      "river": { "order": 5, "text": "River glints", "type": "bool", "value": true },
+      "fireflies": { "order": 6, "text": "Fireflies", "type": "bool", "value": true },
+      "fireflycount": { "order": 7, "text": "Firefly count", "type": "slider", "min": 0, "max": 80, "value": 26 }
+    }
+  }
+}

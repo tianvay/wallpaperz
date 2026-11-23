@@ -1,0 +1,13 @@
+# build output (rebuild with: dotnet publish -c Release -o app  in source/)
+app/
+source/bin/
+source/obj/
+
+# debug renders and caches
+tools/_out/
+__pycache__/
+
+# personal state / scratch
+config.json
+wallpapers/_test/
+.claude/settings.local.json
