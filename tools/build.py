@@ -153,26 +153,32 @@ def street():
     near_dark = nd.binary_dilation(L < 85, iterations=14)
     stars = [p for p in small_bright(L, 28, 7, 5, skyp & (YY < 520) & ~near_dark)
              if sat(a)[int(p[1]), int(p[0])] < 0.4 and L[int(p[1]), int(p[0])] > 140]
-    shine = road_in & (L > 140)      # bright reflections on the wet road
-    # Painterly picture: sky and buildings stay completely still. Only the wet road reflections sway and glint.
+    puddles = road_in & rect(640, 1195, 2150, 1435)          # the mirror-like part of the road
+    shine = puddles & (L > 150)                             # reflections of the lights
+    # A wet road stands still: no pixel warping. It lives through drips landing in the puddles
+    # and small sparkles on the light reflections.
     return dict(
         title='Mocha Street (animated)', src=src, recolor=V_VIVID,
-        mask=dict(r=soft(road_in, 4)),
-        scene=dict(amp=dict(water=0.5), waterScale=1.0, sparkle=0.6, effects=[
+        mask=dict(),
+        scene=dict(effects=[
             dict(type='stars', points=stars, color='rosewater', scale=0.9, alpha=0.9),
             dict(type='shootingStar', x0=1000, x1=2300, y0=20, y1=230, every=[12, 40], color='rosewater'),
             dict(type='plane', y=120, speed=12, dir=-1, x0=900, x1=2420),
+            # drips landing in the puddles
+            dict(type='ripples', points=sample(puddles, 400, 7), every=[0.4, 1.2], size=22, squash=0.26, width=1.4, color='rosewater', shade='crust', alpha=0.6),
+            # sparkles on the light reflections
+            dict(type='glints', points=sample(shine, 1500, 4), colors=['peach', 'yellow', 'rosewater', 'white'], count=40, size=8, alpha=0.55),
             # moths fluttering around the street lamps
             *[dict(type='motes', x0=x - 35, x1=x + 35, y0=y - 25, y1=y + 30, count=4, ax=[6, 18], ay=[4, 12], sizes=[3, 6],
                    colors=['peach', 'yellow'], alpha=0.6) for x, y, r in lamps[:4]],
             # fireflies in the bushes and planters
             dict(type='motes', x0=2160, x1=2540, y0=1000, y1=1230, count=8, colors=['yellow', 'yellow', 'peach'], core=True, coreR=2.5),
             dict(type='motes', x0=160, x1=700, y0=1030, y1=1180, count=6, colors=['yellow', 'peach'], core=True, coreR=2.5),
-            dict(type='glints', points=sample(shine, 1500, 4), colors=['peach', 'yellow', 'rosewater', 'white'], count=60, size=10, alpha=0.6),
-            dict(type='glows', items=[dict(x=x, y=y, r=r, color='peach', speed=0.8, alpha=0.5, flicker=0.1) for x, y, r in lamps] + [
+            # lamps breathe calmly; only the small balcony lamp stutters now and then like an old bulb
+            dict(type='glows', items=[dict(x=x, y=y, r=r, color='peach', speed=0.5, alpha=0.45) for x, y, r in lamps[:4]] + [
+                dict(x=2214, y=694, r=22, color='peach', speed=0.5, alpha=0.45, stutter=True),
                 dict(x=737, y=508, r=170, color='sky', speed=0.5, alpha=0.2),
-                dict(x=648, y=818, r=120, color='sky', speed=0.7, alpha=0.2)]),
-            dict(type='glints', points=sample(road_in & (L > 90), 900), colors=['pink', 'lavender', 'sky'], count=30, size=14, alpha=0.4)]))
+                dict(x=648, y=818, r=120, color='sky', speed=0.7, alpha=0.2)])]))
 
 
 SCENES = dict(city=city, mountains=mountains, tranquility=tranquility, beach=beach, street=street)

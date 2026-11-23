@@ -199,11 +199,15 @@ void main(){
     },
     // breathing light halo  {x,y,r,color,alpha,speed,blink}  blink = on/off beacon
     glows(e) {
-      const gs = e.items.map(g => ({ ...g, ph: rnd(0, 6.3) }));
+      const gs = e.items.map(g => ({ ...g, ph: rnd(0, 6.3), st: rnd(6, 18) }));
       return { add: true, draw(T) { for (const g of gs) {
         let k;
         if (g.blink) { const p = ((T * (g.speed || 1) + g.ph) % 2.2); k = p < 0.12 ? 1 : p < 0.24 ? 0.35 : 0; }
         else k = 0.75 + 0.25 * Math.sin(T * (g.speed || 1) + g.ph) + (g.flicker ? (Math.random() - 0.5) * g.flicker : 0);
+        if (g.stutter) {   // old bulb: every 6-18 s a short burst of drop-outs
+          if (T > g.st + 0.9) g.st = T + rnd(6, 18);
+          if (T > g.st) k *= [1, 0.2, 0.9, 0.1, 1, 0.4, 1][Math.floor((T - g.st) / 0.13) % 7];
+        }
         drawGlow(g.color || 'yellow', g.x, g.y, g.r * (g.blink ? 1 : (0.9 + 0.1 * k)), k * (g.alpha ?? 0.6));
       } } };
     },
@@ -334,9 +338,16 @@ void main(){
         for (let i = rs.length - 1; i >= 0; i--) { const r = rs[i]; r.life += dt; const k = r.life / r.max;
           if (k >= 1) { rs.splice(i, 1); continue; }
           for (let j = 0; j < r.n; j++) { const kk = k - j * 0.25; if (kk <= 0) continue;
-            const rad = (e.size || 22) * kk;
-            ctx.globalAlpha = (1 - kk) * (e.alpha || 0.5);
-            ctx.beginPath(); ctx.ellipse(r.x, r.y, rad, rad * (e.squash || 0.28), 0, 0, 6.283); ctx.stroke(); } }
+            const rad = (e.size || 22) * kk, ry = rad * (e.squash || 0.28), a = (1 - kk) * (e.alpha || 0.5);
+            if (e.shade) {   // puddle style: bright far rim, dark near rim (the ring bends the reflection)
+              ctx.globalAlpha = a; ctx.strokeStyle = col(e.color || 'text');
+              ctx.beginPath(); ctx.ellipse(r.x, r.y, rad, ry, 0, Math.PI, 2 * Math.PI); ctx.stroke();
+              ctx.globalAlpha = a * 0.8; ctx.strokeStyle = col(e.shade);
+              ctx.beginPath(); ctx.ellipse(r.x, r.y + 0.8, rad, ry, 0, 0, Math.PI); ctx.stroke();
+            } else {
+              ctx.globalAlpha = a;
+              ctx.beginPath(); ctx.ellipse(r.x, r.y, rad, ry, 0, 0, 6.283); ctx.stroke();
+            } } }
       } };
     },
     // a small flat sailboat drifting along the horizon, fading in/out at the ends  {y, x0, x1, speed, color, scale}
