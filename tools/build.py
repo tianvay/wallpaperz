@@ -102,17 +102,19 @@ def tranquility():
     fg = soft((L < 100) | (YY > 800), 1.0)
     return dict(
         title='Mocha Tranquility (animated)', src=src, recolor=V_SOFT,
-        mask=dict(r=soft(river_in, 3), a=band(965, 1075, 55) * rect(480, 0, 2080, H) * soft(L > 70, 3)),
+        # no pixel warping on the river: it shows flow through glints drifting downstream (towards the viewer)
+        mask=dict(a=band(965, 1075, 55) * rect(480, 0, 2080, H) * soft(L > 70, 3)),
         fg=(fg, 380, 830),
-        scene=dict(amp=dict(water=0.6, fog=0.4), waterScale=0.9, fog=dict(color='pink'), effects=[
+        scene=dict(amp=dict(fog=0.4), fog=dict(color='pink'), effects=[
             dict(type='shootingStar', x0=200, x1=2300, y0=30, y1=330, every=[10, 35], color='rosewater'),
-            dict(type='motes', x0=520, x1=1050, y0=1120, y1=1360, count=10, colors=['yellow', 'peach'], core=True, coreR=2.5),
-            dict(type='motes', x0=1680, x1=2060, y0=1120, y1=1330, count=8, colors=['yellow', 'peach'], core=True, coreR=2.5),
-            dict(type='streaks', points=sample(river_in, 800, 3), colors=['rosewater', 'text'], count=22, len=50, speed=4, alpha=0.3),
+            # fireflies in the dark forests on both banks (kept off the water)
+            dict(type='motes', x0=520, x1=1000, y0=1120, y1=1360, count=10, colors=['yellow', 'peach'], core=True, coreR=2.5),
+            dict(type='motes', x0=1780, x1=2060, y0=1180, y1=1330, count=7, colors=['yellow', 'peach'], core=True, coreR=2.5),
+            dict(type='streaks', points=sample(river_in, 800, 3), colors=['rosewater', 'text'], count=22, len=50, speed=1.5, alpha=0.3),
             dict(type='clouds', y0=520, y1=770, count=7, size=1.4, speed=0.8, alpha=0.7, colors=['rosewater', 'flamingo', 'pink']),
             dict(type='stars', points=stars, color='lavender'),
             dict(type='glows', items=[dict(x=1612, y=478, r=260, color='rosewater', speed=0.3, alpha=0.3)]),
-            dict(type='glints', points=sample(river_in, 700), colors=['rosewater', 'pink', 'white'], count=40, size=14)]))
+            dict(type='glints', points=sample(river_in, 700), colors=['rosewater', 'pink', 'white'], count=45, size=14, drift=7)]))
 
 
 def beach():
