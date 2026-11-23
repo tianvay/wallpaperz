@@ -68,16 +68,19 @@ def mountains():
     lake_in = nd.binary_erosion(lake, iterations=8)      # keep shorelines, boat and rocks crisp
     return dict(
         title='Mocha Mountains (animated)', src=src, recolor=V_SOFT,
-        mask=dict(r=soft(lake_in, 3), b=soft(lights, 1.5), a=band(940, 1060, 80) * soft(L > 48, 3)),
-        scene=dict(amp=dict(water=0.6, lights=1.2, fog=0.6), waterScale=0.8, lightCell=12, fog=dict(color='text'), effects=[
+        # a still mountain lake: no pixel warping, it lives through light lines, glints and rings
+        mask=dict(b=soft(lights, 1.5), a=band(940, 1060, 80) * soft(L > 48, 3)),
+        scene=dict(amp=dict(lights=1.2, fog=0.6), lightCell=12, fog=dict(color='text'), effects=[
             dict(type='streaks', points=sample(lake_in & (YY > 1070), 800, 3), colors=['text', 'lavender'], count=28, len=90, speed=5, alpha=0.25),
             dict(type='smoke', x=1003, y=762, drift=-16, rise=8, color='overlay2', alpha=0.2),
-            # rings where the fishing line meets the water, now and then a "fish" somewhere on the lake
-            dict(type='ripples', points=[[1893, 1203]] * 8 + sample(lake_in & (YY > 1080), 12, 5), every=[2.5, 6], size=24, color='text', alpha=0.45),
+            # rings where the fishing line meets the water (left of the bow), now and then a "fish" on the lake
+            dict(type='ripples', points=[[1878, 1204]] * 8 + sample(lake_in & (YY > 1080) & ~rect(1850, 1150, 2120, 1260), 12, 5),
+                 every=[2.5, 6], size=18, color='text', alpha=0.45),
             dict(type='birds', y0=300, y1=430, count=5, color='surface0', alpha=0.45),
-            # fireflies like in Mocha Forest: along the trees and fence in front, a few around the cabin
-            dict(type='motes', x0=120, x1=2450, y0=1180, y1=1400, count=22, colors=['yellow', 'yellow', 'peach'], core=True),
-            dict(type='motes', x0=60, x1=520, y0=900, y1=1180, count=6, colors=['yellow', 'peach'], core=True),
+            # fireflies close to the viewer only: along the fence and shore, around the big trees; a few small ones at the cabin
+            dict(type='motes', x0=600, x1=2350, y0=1300, y1=1420, count=14, colors=['yellow', 'yellow', 'peach'], core=True),
+            dict(type='motes', x0=40, x1=640, y0=950, y1=1390, count=10, colors=['yellow', 'peach'], core=True),
+            dict(type='motes', x0=2300, x1=2540, y0=900, y1=1360, count=5, colors=['yellow', 'peach'], core=True),
             dict(type='motes', x0=820, x1=1150, y0=760, y1=880, count=5, size=0.7, colors=['yellow'], core=True),
             dict(type='glows', items=[
                 dict(x=953, y=815, r=34, color='yellow', speed=0.7, alpha=0.5, flicker=0.15),

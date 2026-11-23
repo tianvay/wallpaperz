@@ -203,7 +203,8 @@ void main(){
       return { add: true, draw(T) { for (const g of gs) {
         let k;
         if (g.blink) { const p = ((T * (g.speed || 1) + g.ph) % 2.2); k = p < 0.12 ? 1 : p < 0.24 ? 0.35 : 0; }
-        else k = 0.75 + 0.25 * Math.sin(T * (g.speed || 1) + g.ph) + (g.flicker ? (Math.random() - 0.5) * g.flicker : 0);
+        else k = 0.75 + 0.25 * Math.sin(T * (g.speed || 1) + g.ph)   // smooth candle-like flicker, no per-frame jitter
+          + (g.flicker ? g.flicker * (0.5 * Math.sin(T * 7.3 + g.ph) + 0.3 * Math.sin(T * 12.9 + g.ph * 2.1) + 0.2 * Math.sin(T * 3.1 + g.ph * 0.7)) : 0);
         if (g.stutter) {   // old bulb: every 6-18 s a short burst of drop-outs
           if (T > g.st + 0.9) g.st = T + rnd(6, 18);
           if (T > g.st) k *= [1, 0.2, 0.9, 0.1, 1, 0.4, 1][Math.floor((T - g.st) / 0.13) % 7];
