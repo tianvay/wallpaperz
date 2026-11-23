@@ -8,7 +8,7 @@
 </head><body>
 <script type="module">
 // A slow flight around a snowy peak with a full day/night cycle: procedural terrain, pine forest, mirrored lakes,
-// a mountain village whose windows light up at dusk, a cabin, a boat, birds, fireflies and shooting stars,
+// a mountain village whose windows light up at dusk, a cabin, a boat, birds, fireflies in the woods and shooting stars,
 // in the Catppuccin Mocha palette.
 // URL options: ?speed=1 (flight speed)  ?t=0 (start offset, seconds)  ?day=60 (minutes per day)
 //              ?tod=0.68 (start time of day: 0 midnight, .25 sunrise, .5 noon, .75 sunset)
@@ -419,10 +419,10 @@ if (village) {
     const h = height(x, z); if (h < 3 || !free(x, z, 2)) continue;
     SOLID.push(tinted(new THREE.CylinderGeometry(0.18, 0.25, 6, 5).translate(x, h + 3, z), P.mantle));
     GLOW.push(plain(new THREE.SphereGeometry(0.6, 6, 4).translate(x, h + 6.2, z)));
-    if (n % 3 === 0) addLight(mix(P.yellow, P.peach, 0.4), 900, 70, x, h + 7, z);
+    if (n % 3 === 0) addLight(mix(P.yellow, P.peach, 0.4), 350, 70, x, h + 7, z);
     placed.push({ x, z, r: 1 }); n++;
   }
-  addLight(mix(P.yellow, P.peach, 0.3), 1400, 150, village.x, village.h + 40, village.z);
+  addLight(mix(P.yellow, P.peach, 0.3), 600, 150, village.x, village.h + 40, village.z);
   keepClear.push({ x: village.x, z: village.z, r: 115 });
   SIGHTS.push(new THREE.Vector3(village.x, village.h + 8, village.z));
 }
@@ -501,7 +501,7 @@ const fireCore = new THREE.MeshBasicMaterial({ color: P.yellow.clone() });
     for (const wx of [-3.6, 3.6]) GLOW.push(place(plain(new THREE.PlaneGeometry(2.4, 2.2).translate(wx, 4, d / 2 + 0.58)), x, base, z, ry));
     DIM.push(place(plain(new THREE.PlaneGeometry(2, 4).translate(0, 2.6, d / 2 + 0.57)), x, base, z, ry));
     GLOW.push(place(plain(new THREE.SphereGeometry(0.45, 6, 4).translate(2.2, 5.6, d / 2 + 0.9)), x, base, z, ry));
-    const lp = toWorld(2.2, 6, d / 2 + 3, x, base, z, ry); addLight(P.yellow, 900, 60, lp.x, lp.y, lp.z);
+    const lp = toWorld(2.2, 6, d / 2 + 3, x, base, z, ry); addLight(P.yellow, 180, 45, lp.x, lp.y, lp.z);
     const ch = 15; SOLID.push(place(tinted(new THREE.BoxGeometry(2, ch, 2).translate(-w / 2 - 0.6, ch / 2, -1.5), P.s2), x, base, z, ry));
     smokeSources.push(toWorld(-w / 2 - 0.6, ch + 0.5, -1.5, x, base, z, ry));
     for (let i = 0; i < 9; i++) {                                    // woodpile against the side wall
@@ -534,7 +534,7 @@ const fireCore = new THREE.MeshBasicMaterial({ color: P.yellow.clone() });
     SOLID.push(place(tinted(new THREE.ConeGeometry(6.4, 3.5, 4).rotateY(Math.PI / 4).translate(0, H + 7.4, 0), mix(P.base, P.maroon, 0.35)), x, base, z, ry));
     const beaconMat = new THREE.MeshBasicMaterial({ color: P.maroon.clone() });
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), beaconMat); beacon.position.set(x, base + H + 9.6, z); scene.add(beacon);
-    addLight(P.yellow, 700, 50, x, base + H + 3.5, z);
+    addLight(P.yellow, 220, 45, x, base + H + 3.5, z);
     animators.push((t, night) => {
       const blink = Math.pow(Math.max(0, Math.sin(t * 2.2)), 8);
       beaconMat.color.copy(P.maroon).multiplyScalar(0.4 + (1 + 6 * night) * blink);
@@ -556,7 +556,7 @@ const fireCore = new THREE.MeshBasicMaterial({ color: P.yellow.clone() });
     for (const wx of [-2.8, 2.8]) GLOW.push(place(plain(new THREE.PlaneGeometry(1.8, 1.8).translate(wx, Hb - 3, 4.06)), x, base, z, ry));
     SOLID.push(place(tinted(new THREE.CylinderGeometry(0.12, 0.12, 10).translate(7.5, Hb + 2, 0), P.mantle), x, base, z, ry));
     SOLID.push(place(tinted(new THREE.BoxGeometry(0.1, 1.8, 3).translate(7.5, Hb + 6, 1.5), P.peach), x, base, z, ry));        // little flag
-    const lp = toWorld(0, Hb - 2, 7, x, base, z, ry); addLight(P.yellow, 700, 55, lp.x, lp.y, lp.z);
+    const lp = toWorld(0, Hb - 2, 7, x, base, z, ry); addLight(P.yellow, 220, 45, lp.x, lp.y, lp.z);
     SOLID.push(place(tinted(new THREE.BoxGeometry(1.6, 5, 1.6).translate(-3, Hb + 1.5, -1), P.s2), x, base, z, ry));
     smokeSources.push(toWorld(-3, Hb + 4.5, -1, x, base, z, ry));
     SIGHTS.push(new THREE.Vector3(x, base + Hb, z));
@@ -578,7 +578,7 @@ let boat = null;
     }
     const chim = new THREE.Mesh(new THREE.BoxGeometry(1.8, 8, 1.8), wood); chim.position.set(3.5, 11, 1.5); cabin.add(chim);
     const lamp = new THREE.PointLight(P.yellow, 0, 140, 1.6); lamp.position.set(0, 6, 9); cabin.add(lamp);
-    lampLights.push({ L: lamp, I: 2500 });
+    lampLights.push({ L: lamp, I: 600 });
     cabin.position.set(spot.x, spot.h - 0.5, spot.z); cabin.rotation.y = -spot.a + 0.4;
     scene.add(cabin); cabin.updateMatrixWorld();
     smokeSources.push(new THREE.Vector3(3.5, 15.5, 1.5).applyMatrix4(cabin.matrixWorld));
@@ -595,7 +595,7 @@ let boat = null;
       for (let k = 0; k <= 4; k++) for (const px of [-1.8, 1.8]) SOLID.push(place(tinted(new THREE.CylinderGeometry(0.25, 0.25, 9).translate(px, -3, k * (L - 4) / 4 - 2), P.base), sx, 0, sz, ry));
       SOLID.push(place(tinted(new THREE.CylinderGeometry(0.2, 0.2, 4).translate(1.8, 3.5, L - 3.5), P.mantle), sx, 0, sz, ry));
       GLOW.push(place(plain(new THREE.SphereGeometry(0.5, 6, 4).translate(1.8, 5.8, L - 3.5)), sx, 0, sz, ry));
-      const lp = toWorld(1.8, 6.5, L - 3.5, sx, 0, sz, ry); addLight(P.peach, 600, 50, lp.x, lp.y, lp.z);
+      const lp = toWorld(1.8, 6.5, L - 3.5, sx, 0, sz, ry); addLight(P.peach, 250, 45, lp.x, lp.y, lp.z);
       const row = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 0.7, 8, 6, 1).rotateZ(Math.PI / 2).scale(1, 0.5, 1), new THREE.MeshLambertMaterial({ color: mix(P.maroon, P.s1, 0.55), flatShading: true }));
       row.position.copy(toWorld(-3.8, 0.5, L * 0.6, sx, 0, sz, ry)); row.rotation.y = ry + Math.PI / 2; scene.add(row);
       animators.push((t) => { row.position.y = 0.5 + Math.sin(t * 1.1 + 1) * 0.2; row.rotation.x = Math.sin(t * 0.8) * 0.04; });
@@ -677,14 +677,21 @@ for (const src of smokeSources) for (let i = 0; i < 10; i++) {
   sp.userData = { k: i / 10, src, wob: rnd() * 6.28 }; scene.add(sp); smoke.push(sp);
 }
 
-// ---------- fireflies around the village and the cabin at night ----------
+// ---------- fireflies: little swarms in the forest at night, away from buildings ----------
 const flies = (() => {
-  const homes = keepClear.length ? keepClear : [{ x: 600, z: 0, r: 100 }];
-  const n = 110, base = [], pos = new Float32Array(n * 3);
+  const swarms = [];
+  for (let i = 0; i < 3000 && swarms.length < 12; i++) {
+    const a = rnd() * 6.28, r = 430 + rnd() * 260, x = Math.cos(a) * r, z = Math.sin(a) * r, h = height(x, z);
+    if (h < 6 || h > 160 || slopeAt(x, z) > 0.7) continue;
+    if (keepClear.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 45)) continue;
+    if (swarms.some((s) => Math.hypot(s.x - x, s.z - z) < 150)) continue;
+    swarms.push({ x, z });
+  }
+  const n = 12 * Math.max(1, swarms.length), base = [], pos = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
-    const c = homes[i % homes.length], a = rnd() * 6.28, d = c.r * (0.3 + rnd() * 0.7);
+    const c = swarms[i % swarms.length] || { x: 600, z: 0 }, a = rnd() * 6.28, d = 4 + rnd() * 30;
     const x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d;
-    base.push({ x, y: Math.max(height(x, z), 1) + 2 + rnd() * 7, z, p: rnd() * 100, s: 0.3 + rnd() * 0.5 });
+    base.push({ x, y: Math.max(height(x, z), 1) + 1.5 + rnd() * 5, z, p: rnd() * 100, s: 0.3 + rnd() * 0.5 });
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const pts = new THREE.Points(g, new THREE.PointsMaterial({ map: soft, color: mix(P.yellow, P.green, 0.35).multiplyScalar(3), size: 1.8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -760,10 +767,10 @@ function frame(now) {
   stars.material.opacity = cur.stars; stars.rotation.y = t * 0.0015;
   moon.position.copy(moonDir).multiplyScalar(5000); moon.material.opacity = 0.25 + 0.75 * smooth(0.25, -0.1, e);
   const night = cur.win;
-  winMat.color.copy(P.yellow).multiplyScalar(0.35 + 4.5 * night);
-  winMatDim.color.copy(P.peach).multiplyScalar(0.25 + 2.2 * night);
+  winMat.color.copy(P.yellow).multiplyScalar(0.3 + 1.9 * night);
+  winMatDim.color.copy(P.peach).multiplyScalar(0.2 + 1.0 * night);
   for (const { L, I } of lampLights) L.intensity = I * night;
-  if (bloom) bloom.strength = 0.35 + 0.45 * night;
+  if (bloom) bloom.strength = 0.35 + 0.3 * night;
 
   // camera
   const [x, z] = pathXZ(t);
