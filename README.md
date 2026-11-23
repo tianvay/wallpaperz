@@ -62,8 +62,9 @@ Folders whose name starts with `_` (like `wallpapers\_todos`) are work folders a
   stars, glows, beacons, beams, smoke, clouds, birds, glints and fireflies, configured in each folder's `scene.js`
 - `forest_scene.py` writes Mocha Forest's `scene.js` (values copied 1:1 from the original hand-written page,
   which is kept in `tools\_backup\mocha-forest-classic`)
-- The original source images were removed from `wallpapers\_todos` after conversion. To rebuild a scene from
-  scratch, restore them first: `git checkout 3aabfb7 -- wallpapers/_todos`
+- The original source images are not part of this repository (removed after conversion). To rebuild one of the
+  existing scenes from scratch, put its original image back into `wallpapers\_todos` under the file name used in
+  `build.py`.
 - `build.py` holds one function per scene (masks, coordinates, effects). Run `python -I build.py beach` to rebuild one
   scene, or with no argument to rebuild all of them. Debug overlays of the masks go to `tools\_out\`.
 
