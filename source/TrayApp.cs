@@ -43,6 +43,7 @@ class TrayApp : ApplicationContext
 
     public TrayApp()
     {
+        MigrateRunKey();
         wallpapersMenu = new ToolStripMenuItem("Wallpapers");
         pauseItem = new ToolStripMenuItem("Pause", null, (_, _) => { userPaused = !userPaused; ApplyPause(); });
         fsItem = new ToolStripMenuItem("Pause when a fullscreen app runs", null, (_, _) =>
@@ -198,30 +199,42 @@ class TrayApp : ApplicationContext
         catch (Exception ex) { MessageBox.Show("Could not add wallpaper:\n" + ex.Message, "Mocha Wallpaper"); }
     }
 
-    static bool IsAutostart()
+    // Autostart is a shortcut in the user's Startup folder. A Run-key entry was skipped silently at logon on
+    // Windows 11 build 26300, even when marked enabled in StartupApproved, while Startup-folder items ran.
+    static string ShortcutPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Mocha Wallpaper.lnk");
+    const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+    static bool IsAutostart() => File.Exists(ShortcutPath);
+
+    static void CreateShortcut()
     {
-        using var k = Registry.CurrentUser.OpenSubKey(RunKey);
-        return k?.GetValue("MochaWallpaper") is string;
+        var shell = Type.GetTypeFromProgID("WScript.Shell");
+        dynamic sh = Activator.CreateInstance(shell);
+        dynamic lnk = sh.CreateShortcut(ShortcutPath);
+        lnk.TargetPath = Environment.ProcessPath;
+        lnk.WorkingDirectory = AppContext.BaseDirectory;
+        lnk.Description = "Mocha Wallpaper";
+        lnk.Save();
     }
 
-    // Newer Windows 11 builds only launch Run entries that are also marked enabled in
-    // StartupApproved (the Settings > Apps > Startup list); without that mark they are skipped silently.
-    const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    // Older builds of the app autostarted through the Run key: replace that entry with the shortcut.
+    static void MigrateRunKey()
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(RunKey, true);
+        if (k?.GetValue("MochaWallpaper") is not string) return;
+        k.DeleteValue("MochaWallpaper", false);
+        using (var a = Registry.CurrentUser.OpenSubKey(ApprovedKey, true)) a?.DeleteValue("MochaWallpaper", false);
+        try { if (!IsAutostart()) CreateShortcut(); } catch { }
+    }
 
     void ToggleAutostart()
     {
-        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-        using var a = Registry.CurrentUser.CreateSubKey(ApprovedKey);
-        if (IsAutostart())
+        try
         {
-            k.DeleteValue("MochaWallpaper", false);
-            a.DeleteValue("MochaWallpaper", false);
+            if (IsAutostart()) File.Delete(ShortcutPath);
+            else CreateShortcut();
         }
-        else
-        {
-            k.SetValue("MochaWallpaper", $"\"{Environment.ProcessPath}\"");
-            a.SetValue("MochaWallpaper", new byte[] { 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, RegistryValueKind.Binary);
-        }
+        catch (Exception ex) { MessageBox.Show("Could not change autostart:\n" + ex.Message, "Mocha Wallpaper"); }
         autostartItem.Checked = IsAutostart();
     }
 
