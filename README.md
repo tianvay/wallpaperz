@@ -68,11 +68,15 @@ Folders whose name starts with `_` (like `wallpapers\_todos`) are work folders a
 - `build.py` holds one function per scene (masks, coordinates, effects). Run `python -I build.py beach` to rebuild one
   scene, or with no argument to rebuild all of them. Debug overlays of the masks go to `tools\_out\`.
 
-## Rebuilding the app
+## Building the app
 
-Exit it from the tray first, then:
+`app\` is build output and is not in git: after a fresh clone, or after changing `source\`, build it yourself.
+You need the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the WebView2 runtime (already part of
+Windows 11). If the app is running, exit it from the tray first (the .exe is locked while it runs), then:
 
 ```powershell
 cd C:\_wallpaperz\source
 dotnet publish -c Release -o C:\_wallpaperz\app
 ```
+
+Start `app\MochaWallpaper.exe` and tick **Start with Windows** in the tray menu to run it at every logon.
