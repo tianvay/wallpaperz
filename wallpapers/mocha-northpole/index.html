@@ -1,0 +1,961 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>North Pole Workshop (3D)</title>
+<style>html,body{margin:0;height:100%;background:#11111b;overflow:hidden}canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}</style>
+<script type="importmap">{ "imports": { "three": "./lib/three.module.min.js" } }</script>
+<!-- lib/ holds three.js r170 (MIT) and addons; kit3d.js is the shared engine (master copy in tools/kit3d) -->
+</head><body>
+<script type="module">
+// Santa's workshop at the North Pole. A red workshop hall with a clock tower (it shows the real time) and a present
+// conveyor into a giant sack; a Christmas tree with a tent of light garlands, a toy train and a little market on the
+// square; the striped pole on its roundabout; roads and footpaths linking a village of pastel elf houses, along which
+// elves walk to work and back; a post office swallowing letters from the sky, a skating pond, a sledding hill, a
+// gingerbread house, igloos, snowmen, the reindeer paddock (one calf is practising to fly), polar bears on the sea
+// ice, and the sleigh looping overhead with magic sparkling from the reindeers' hooves.
+// Every object carries two colours: Catppuccin Latte by day, Catppuccin Mocha by night. URL options: see kit3d.js.
+import { createWorld, THREE, mergeGeometries, P, L, mix, smooth, fbm, ridged } from './kit3d.js';
+
+const sq = (v) => v * v;
+const HILL = { x: -270, z: 172 };                     // the sledding hill
+function height(x, z) {
+  const r = Math.hypot(x, z), a = Math.atan2(z, x);
+  const coast = 760 + 120 * fbm(Math.cos(a) * 1.3 + 5, Math.sin(a) * 1.3, 3);
+  let h = 12 + 8 * fbm(x * 0.006, z * 0.006, 3);
+  h += 45 * smooth(230, 480, r) * (0.5 + 0.5 * fbm(x * 0.004 + 7, z * 0.004 - 3, 4));
+  const f = smooth(240, 150, r); h = h * (1 - f) + 12 * f;                               // flat village ground
+  h += 2.5 * fbm(x * 0.05, z * 0.05, 2) * (1 - f);
+  h += 42 * Math.exp(-(sq(x - HILL.x) + sq(z - HILL.z)) / sq(80));
+  h -= (h + 28) * smooth(coast - 160, coast + 40, r);                                     // shore down to the frozen sea
+  h += 380 * smooth(1750, 2250, r) * (0.3 + 0.9 * ridged(x * 0.003 + 2, z * 0.003, 4));  // far icy ranges
+  return h;
+}
+
+// ---------- sky and light through the day ----------
+const NIGHT = { top: mix(P.crust, P.base, 0.5), mid: mix(P.base, P.s0, 0.45), hor: mix(P.s0, P.s1, 0.4).lerp(P.mauve, 0.05), glow: P.s1, disc: P.lav,
+  light: P.lav, lightI: 0, hemi: mix(P.teal, P.lav, 0.55), hemiI: 0.55, cloud: mix(P.s1, P.s2, 0.4), mist: mix(P.s1, P.o0, 0.35),
+  water: mix(P.s0, P.sapph, 0.12), fogD: 0.0006, stars: 1, win: 1, snow: 0.18, aurora: 1 };
+const KEYS = [
+  { e: -1, ...NIGHT }, { e: -0.3, ...NIGHT },
+  { e: -0.08, top: mix(P.base, P.s1, 0.5), mid: mix(P.s1, P.lav, 0.25), hor: mix(P.lav, P.pink, 0.3).lerp(P.s1, 0.45), glow: mix(P.pink, P.peach, 0.4),
+    disc: P.peach, light: P.pink, lightI: 0, hemi: mix(P.lav, P.blue, 0.4), hemiI: 0.8, cloud: mix(P.lav, P.s2, 0.45), mist: mix(P.o0, P.lav, 0.25),
+    water: mix(P.s1, P.lav, 0.2), fogD: 0.0007, stars: 0.45, win: 0.9, snow: 0.25, aurora: 0.25 },
+  { e: 0.06, top: mix(L.lav, L.base, 0.45), mid: mix(L.pink, L.base, 0.65), hor: mix(L.rose, L.base, 0.6), glow: mix(L.peach, L.base, 0.4),
+    disc: mix(L.yellow, L.base, 0.3), light: mix(L.peach, L.base, 0.5), lightI: 1.5, hemi: mix(L.lav, L.base, 0.6), hemiI: 1.05,
+    cloud: mix(L.pink, L.base, 0.6), mist: L.base, water: mix(L.lav, L.base, 0.45), fogD: 0.0006, stars: 0.08, win: 0.45, snow: 0.3, aurora: 0 },
+  { e: 0.3, top: mix(L.blue, L.base, 0.45), mid: mix(L.sky, L.base, 0.65), hor: mix(L.base, L.sky, 0.08), glow: L.base, disc: L.base,
+    light: L.base, lightI: 1.6, hemi: mix(L.sky, L.base, 0.55), hemiI: 1.15, cloud: L.base, mist: L.base, water: mix(L.sky, L.base, 0.5),
+    fogD: 0.0004, stars: 0, win: 0.03, snow: 0.06, aurora: 0 },
+  { e: 1, top: mix(L.blue, L.base, 0.38), mid: mix(L.sky, L.base, 0.6), hor: mix(L.base, L.sky, 0.1), glow: L.base, disc: L.base,
+    light: L.base, lightI: 1.7, hemi: mix(L.sky, L.base, 0.5), hemiI: 1.2, cloud: L.base, mist: L.base, water: mix(L.sky, L.base, 0.45),
+    fogD: 0.00038, stars: 0, win: 0, snow: 0.05, aurora: 0 },
+];
+
+// ---------- colour pairs: [Latte by day, Mocha by night] ----------
+const D = (d, n) => [d, n];
+const pal = {
+  snow: D(L.base, mix(P.text, P.lav, 0.35)), ice: D(mix(L.base, L.sky, 0.12), mix(P.s2, P.sapph, 0.35)), rock: D(mix(L.s1, L.o1, 0.45), mix(P.s1, P.o0, 0.5)),
+  road: D(mix(L.s0, L.lav, 0.15), mix(P.o0, P.lav, 0.12)), path: D(mix(L.mantle, L.s0, 0.55), mix(P.o1, P.lav, 0.2)),
+  cobble: D(mix(L.s0, L.rose, 0.3), mix(P.o0, P.rose, 0.22)), cobble2: D(mix(L.s0, L.rose, 0.18), mix(P.o0, P.rose, 0.12)),
+  pondIce: D(mix(L.sky, L.base, 0.62), mix(P.sapph, P.s1, 0.5)),
+  red: D(mix(L.red, L.base, 0.3), mix(P.red, P.s0, 0.3)), redDeep: D(mix(L.red, L.text, 0.22), mix(P.maroon, P.s0, 0.4)),
+  roofRed: D(mix(L.maroon, L.text, 0.35), mix(P.maroon, P.base, 0.45)), trim: D(L.mantle, mix(P.text, P.rose, 0.3)), white: D(L.base, mix(P.text, P.lav, 0.25)),
+  wood: D(mix(L.rose, L.sub0, 0.55), mix(P.flam, P.s1, 0.5)), woodDark: D(mix(L.sub0, L.text, 0.5), mix(P.s1, P.base, 0.4)),
+  gold: D(mix(L.yellow, L.peach, 0.25), P.yellow), dark: D(mix(L.text, L.base, 0.15), mix(P.s0, P.base, 0.2)), metal: D(mix(L.o1, L.text, 0.2), P.o0),
+  treeA: D(mix(mix(L.green, L.teal, 0.35), L.text, 0.35), mix(mix(P.green, P.teal, 0.4), P.base, 0.45)),
+  treeB: D(mix(mix(L.green, L.teal, 0.35), L.text, 0.48), mix(mix(P.green, P.teal, 0.4), P.base, 0.56)),
+  pine: D(mix(L.teal, L.o2, 0.55), mix(P.teal, P.s1, 0.6)),
+  fur: D(mix(L.rose, L.sub0, 0.5), mix(P.flam, P.s1, 0.55)), furDark: D(mix(L.sub0, L.text, 0.45), mix(P.s1, P.base, 0.3)),
+  furLight: D(mix(L.rose, L.base, 0.45), mix(P.rose, P.s2, 0.3)), antler: D(mix(L.rose, L.base, 0.15), mix(P.rose, P.o1, 0.3)),
+  skin: D(mix(L.rose, L.base, 0.5), mix(P.rose, P.s2, 0.15)), bear: D(mix(L.base, L.yellow, 0.08), mix(P.text, P.yellow, 0.12)),
+  carrot: D(L.peach, P.peach), ginger: D(mix(L.peach, L.sub0, 0.42), mix(P.peach, P.s1, 0.45)), hay: D(mix(L.yellow, L.rose, 0.45), mix(P.yellow, P.s1, 0.5)),
+  sack: D(mix(L.red, L.rose, 0.4), mix(P.red, P.s1, 0.4)),
+};
+const acc = (k, dl = 0.12, dn = 0.2) => D(mix(L[k], L.base, dl), mix(P[k], P.s0, dn));
+const PASTEL = ['green', 'peach', 'sky', 'pink', 'yellow', 'lav', 'teal', 'mauve', 'flam'].map((k) => D(mix(L[k], L.base, 0.55), mix(P[k], P.s0, 0.42)));
+const ACCENTS = ['red', 'green', 'blue', 'mauve', 'peach', 'teal', 'yellow'].map((k) => acc(k));
+function terrainColor(x, y, z, up, c, n) {
+  c.copy(pal.snow[n]);
+  if (y < 1) c.copy(pal.ice[n]);
+  const steep = smooth(0.8, 0.55, up) * (0.6 + 0.4 * (fbm(x * 0.02, z * 0.02, 2) * 0.5 + 0.5));
+  c.lerp(pal.rock[n], steep);
+  return 0.5 * (1 - steep);
+}
+
+const W = createWorld({
+  seed: 241224, height, keys: KEYS, tod: 0.74, sunAz: 1.9,
+  terrain: { size: 4600, seg: 460, color: (x, y, z, up, c) => terrainColor(x, y, z, up, c, 0) },
+  water: { radius: 2700, ice: true },
+  path: (t) => { const a = t * 0.0115; return [Math.cos(a) * (365 + 85 * Math.sin(t * 0.0093)), Math.sin(a) * (355 + 80 * Math.sin(t * 0.0071 + 2))]; },
+  center: new THREE.Vector3(0, 20, 0), hover: [48, 38], centerPull: 0.5, lookAhead: 30, lookDrop: 34,
+  bloom: { threshold: 0.95, day: 0.12, night: 0.42 },
+  groundLight: mix(P.s0, P.s1, 0.5), moonI: 0.75, noMoon: true,
+});
+const { rnd, scene, GLOW, DIM, place, plain, toWorld, groundAt, addLight, glowMat, keepClear, SIGHTS, animators, smokeSources, cur } = W;
+const G0 = height(0, 0);
+const Y = new THREE.Vector3(0, 1, 0);
+const pick = (arr) => arr[(rnd() * arr.length) | 0];
+
+// ---------- the day/night material: vertex colour `color` by day, `color2` by night ----------
+const NM = { value: 0 };
+function dualPatch(sh) {
+  sh.uniforms.nightMix = NM;
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 color2; uniform float nightMix;')
+    .replace('#include <color_vertex>', `vColor = vec3(1.0); vColor *= mix(color, color2, nightMix);
+      #ifdef USE_INSTANCING_COLOR
+        vColor.xyz *= instanceColor.xyz;
+      #endif`);
+}
+const dualMat = (o = {}) => { const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...o }); m.onBeforeCompile = (sh) => dualPatch(sh); return m; };
+const DUAL = dualMat(), ROADMAT = dualMat({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
+{ // give the kit's terrain its night colours too
+  const terr = scene.children.find((o) => o.isMesh && o.geometry.attributes.glow), g = terr.geometry, p = g.attributes.position, n = g.attributes.normal;
+  const c2 = new Float32Array(p.count * 3), c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) { terrainColor(p.getX(i), p.getY(i), p.getZ(i), n.getY(i), c, 1); c2.set([c.r, c.g, c.b], i * 3); }
+  g.setAttribute('color2', new THREE.BufferAttribute(c2, 3));
+  const prev = terr.material.onBeforeCompile; terr.material.onBeforeCompile = (sh, r) => { prev(sh, r); dualPatch(sh); };
+}
+const S = [], RD = [];                                  // static dual-coloured geometry; roads and paving
+function tint(g, k) {
+  const [d, n] = typeof k === 'string' ? pal[k] : k;
+  g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); if (!g.attributes.normal) g.computeVertexNormals();
+  const cnt = g.attributes.position.count, a = new Float32Array(cnt * 3), b = new Float32Array(cnt * 3);
+  for (let i = 0; i < cnt; i++) { a.set([d.r, d.g, d.b], i * 3); b.set([n.r, n.g, n.b], i * 3); }
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3)); g.setAttribute('color2', new THREE.BufferAttribute(b, 3)); return g;
+}
+const box = (w, h, d, x, y, z, k) => tint(new THREE.BoxGeometry(w, h, d).translate(x, y, z), k);
+const cyl = (r1, r2, h, seg, x, y, z, k) => tint(new THREE.CylinderGeometry(r1, r2, h, seg).translate(x, y, z), k);
+const ball = (r, x, y, z, k, det = 1) => tint(new THREE.IcosahedronGeometry(r, det).translate(x, y, z), k);
+const cone = (r, h, seg, x, y, z, k) => tint(new THREE.ConeGeometry(r, h, seg).translate(x, y, z), k);
+const merged = (parts) => mergeGeometries(parts);
+const win = (w, h, ry, lx, ly, lz, x, base, z, hry, dim = rnd() < 0.3) => (dim ? DIM : GLOW).push(place(plain(new THREE.PlaneGeometry(w, h).rotateY(ry).translate(lx, ly, lz)), x, base, z, hry));
+
+// road ribbons that hug the ground
+function ribbon(pts, width, k, lift = 0.15) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) { const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2.5)); for (let j = 0; j < n; j++) out.push([ax + (bx - ax) * j / n, az + (bz - az) * j / n]); }
+  out.push(pts[pts.length - 1]);
+  const A = [], B = [];
+  for (let i = 0; i < out.length; i++) {
+    const a = out[Math.max(0, i - 1)], b = out[Math.min(out.length - 1, i + 1)];
+    let dx = b[0] - a[0], dz = b[1] - a[1]; const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
+    const nx = -dz * width / 2, nz = dx * width / 2, [x, z] = out[i];
+    A.push(new THREE.Vector3(x + nx, groundAt(x + nx, z + nz) + lift, z + nz)); B.push(new THREE.Vector3(x - nx, groundAt(x - nx, z - nz) + lift, z - nz));
+  }
+  const pos = []; for (let i = 0; i < out.length - 1; i++) pos.push(A[i], B[i], A[i + 1], B[i], B[i + 1], A[i + 1]);
+  RD.push(tint(new THREE.BufferGeometry().setFromPoints(pos), k));
+}
+
+// ---------- twinkling bulbs, wires, halos, stars ----------
+const BULBS = [], WIRES = [];
+const BPAL = [[L.red, P.red], [L.yellow, P.yellow], [L.green, P.green], [L.blue, P.blue], [L.mauve, P.mauve], [L.peach, P.peach], [L.teal, P.teal], [L.pink, P.pink]];
+function bulb(p, size = 0.42, ci = null, chase = false) { BULBS.push({ p: p.clone(), size, ci: ci ?? ((rnd() * BPAL.length) | 0), ph: rnd() * 6.28, sp: 0.5 + rnd() * 1.6, chase }); }
+function garland(a, b, sag, spacing = 2.4, size = 0.4) {
+  const n = Math.max(2, Math.round(a.distanceTo(b) / spacing)); let prev = null;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, p = a.clone().lerp(b, u); p.y -= sag * 4 * u * (1 - u);
+    if (prev) WIRES.push(prev, p);
+    if (i > 0 && i < n) bulb(p, size);
+    prev = p;
+  }
+}
+function finishBulbs() {
+  const n = BULBS.length, mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffffff }), n);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), c = new THREE.Color();
+  BULBS.forEach((b, i) => { mesh.setMatrixAt(i, m.compose(b.p, q, s.setScalar(b.size))); mesh.setColorAt(i, c.setRGB(1, 1, 1)); });
+  scene.add(mesh);
+  const wire = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(WIRES), new THREE.LineBasicMaterial({ color: L.o2.clone() }));
+  scene.add(wire);
+  animators.push((t, night) => {
+    for (let i = 0; i < n; i++) {
+      const b = BULBS[i], [d, nc] = BPAL[b.ci];
+      const tw = b.chase ? 0.5 + 0.5 * Math.sin(t * 1.4 - b.p.y * 0.3 + b.ph * 0.15) : 0.5 + 0.5 * Math.sin(t * b.sp + b.ph);
+      const k = (0.3 + 0.85 * tw * tw) * night, dk = 1 - night;
+      c.setRGB(d.r * dk + nc.r * k, d.g * dk + nc.g * k, d.b * dk + nc.b * k);
+      mesh.setColorAt(i, c);
+    }
+    mesh.instanceColor.needsUpdate = true;
+    wire.material.color.copy(L.o2).lerp(P.s0, night);
+  });
+}
+function halo(color, size, x, y, z, dayO = 0, nightO = 0.3) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sp.scale.set(size, size, 1); sp.position.set(x, y, z); scene.add(sp);
+  animators.push((t, night) => { sp.material.opacity = dayO + (nightO - dayO) * night; });
+  return sp;
+}
+function starGeo(r1, r2, depth) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < 10; i++) { const r = i % 2 ? r2 : r1, a = i / 10 * Math.PI * 2 + Math.PI / 2; i ? s.lineTo(Math.cos(a) * r, Math.sin(a) * r) : s.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
+  return new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false }).translate(0, 0, -depth / 2);
+}
+
+// ---------- sparkles (reindeer magic): one shared particle pool ----------
+const SPK = (() => {
+  const N = 900, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), info = Array.from({ length: N }, () => ({ age: 9, life: 1, v: new THREE.Vector3(), c: P.yellow }));
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ map: W.soft, vertexColors: true, size: 2.8, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  pts.frustumCulled = false; scene.add(pts);
+  const tints = [mix(P.yellow, P.peach, 0.2), P.rose, P.lav, mix(P.teal, P.sky, 0.5), P.pink];
+  let next = 0;
+  const emit = (p, spread = 1, fall = 1.5) => {
+    const s = info[next]; s.age = 0; s.life = 2 + Math.random() * 2.5; s.c = tints[(Math.random() * tints.length) | 0];
+    s.v.set((Math.random() - 0.5) * spread, -fall * (0.5 + Math.random()), (Math.random() - 0.5) * spread);
+    pos.set([p.x, p.y, p.z], next * 3); next = (next + 1) % N;
+  };
+  animators.push((t, night, dt) => {
+    const k = 0.5 + 0.8 * night;
+    for (let i = 0; i < N; i++) {
+      const s = info[i]; s.age += dt;
+      if (s.age < s.life) {
+        const f = Math.pow(1 - s.age / s.life, 1.4) * (0.55 + 0.45 * Math.sin(s.age * 18 + i));
+        pos[i * 3] += s.v.x * dt; pos[i * 3 + 1] += s.v.y * dt; pos[i * 3 + 2] += s.v.z * dt;
+        col.set([s.c.r * f * k, s.c.g * f * k, s.c.b * f * k], i * 3);
+      } else col.set([0, 0, 0], i * 3);
+    }
+    g.attributes.position.needsUpdate = true; g.attributes.color.needsUpdate = true;
+  });
+  return { emit };
+})();
+
+// ---------- the road network ----------
+const RING = (a) => 205 + 12 * Math.sin(3 * a + 1);
+const ringPt = (a) => [Math.cos(a) * RING(a), Math.sin(a) * RING(a)];
+const SPOKES = [Math.PI / 2, 0.75, -0.05, -2.3, Math.PI + 0.1, 2.35];
+const POLE = { x: 0, z: 96 };
+const SEGS = [];                                       // [ax, az, bx, bz, halfWidth] for distance checks
+function segDist(px, pz, ax, az, bx, bz) { const dx = bx - ax, dz = bz - az, u = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz))); return Math.hypot(px - ax - dx * u, pz - az - dz * u); }
+function roadDist(x, z) { let d = Math.abs(Math.hypot(x, z) - RING(Math.atan2(z, x))); for (const s of SEGS) d = Math.min(d, segDist(x, z, s[0], s[1], s[2], s[3])); return d; }
+function road(pts, width, k = 'road', lift = 0.15) { ribbon(pts, width, k, lift); for (let i = 0; i < pts.length - 1; i++) SEGS.push([pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]]); }
+{
+  const ring = []; for (let i = 0; i <= 260; i++) ring.push(ringPt(i / 260 * Math.PI * 2));
+  ribbon(ring, 6.5, 'road');
+  for (const a of SPOKES) road([[Math.cos(a) * 79, Math.sin(a) * 79], ringPt(a)], 7);
+  road([[0, -79], [0, -101]], 8);
+}
+// path lanterns along the roads (small, warm, no real lights)
+function lantern(x, z, hgt = 4.2) {
+  const g = groundAt(x, z);
+  S.push(cyl(0.18, 0.26, hgt, 5, x, g + hgt / 2, z, 'dark'), box(0.8, 0.12, 0.8, x, g + hgt + 0.95, z, 'dark'), cone(0.6, 0.5, 4, x, g + hgt + 1.25, z, 'white'));
+  DIM.push(plain(new THREE.BoxGeometry(0.55, 0.75, 0.55).translate(x, g + hgt + 0.5, z)));
+}
+for (const a of SPOKES) for (let r = 100, s = 1; r < RING(a) - 12; r += 24, s = -s) { const nx = -Math.sin(a), nz = Math.cos(a); lantern(Math.cos(a) * r + nx * 5 * s, Math.sin(a) * r + nz * 5 * s); }
+for (let i = 0; i < 34; i++) { const a = i / 34 * Math.PI * 2 + 0.05, r = RING(a) + 4.6; if (SPOKES.some((s) => Math.abs(Math.atan2(Math.sin(a - s), Math.cos(a - s))) < 0.05)) continue; lantern(Math.cos(a) * r, Math.sin(a) * r); }
+
+// ---------- the square: cobbles, tree, garland tent, toy train, market, candy canes ----------
+{
+  for (let i = 0; i < 8; i++) RD.push(tint(new THREE.RingGeometry(i * 10, i * 10 + 10, 72, 1).rotateX(-Math.PI / 2).translate(0, G0 + 0.12, 0), i % 2 ? 'cobble' : 'cobble2'));
+  // the tree
+  const tiers = [];
+  S.push(cyl(1.8, 2.6, 7, 8, 0, G0 + 2.5, 0, 'woodDark'), cyl(9, 10, 1.6, 12, 0, G0 + 0.3, 0, 'white'));
+  for (let i = 0; i < 6; i++) {
+    const R = 17 * (1 - i * 0.14), yb = G0 + 4 + i * 7, hh = 14; tiers.push({ R, yb, hh });
+    S.push(tint(new THREE.ConeGeometry(R, hh, 9).rotateY(i * 0.5).translate(0, yb + hh / 2, 0), i % 2 ? 'treeA' : 'treeB'));
+    S.push(tint(new THREE.ConeGeometry(R * 0.35, hh * 0.35, 9).rotateY(i * 0.5).translate(0, yb + hh * 0.83, 0), 'snow'));
+  }
+  const envR = (y) => { let r = 0; for (const t of tiers) { const u = (y - t.yb) / t.hh; if (u >= 0 && u <= 1) r = Math.max(r, t.R * (1 - u)); } return r; };
+  const topY = G0 + 4 + 5 * 7 + 14;
+  for (let i = 0, N = 300; i < N; i++) {
+    const f = i / N, y = G0 + 6 + f * (topY - G0 - 9), a = f * Math.PI * 2 * 9, r = envR(y) * 0.92 + 0.4;
+    bulb(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r), 0.5, null, true);
+  }
+  const baub = ['red', 'gold', 'mauve', 'white'].map((k) => (k === 'gold' || k === 'white' ? k : acc(k, 0.1, 0.1)));
+  baub.push(acc('blue', 0.2, 0.1));
+  for (let i = 0; i < 70; i++) { const y = G0 + 6 + rnd() * (topY - G0 - 12), a = rnd() * 6.28, r = envR(y) * 0.85; S.push(ball(0.9 + rnd() * 0.5, Math.cos(a) * r, y - 0.8, Math.sin(a) * r, pick(baub), 0)); }
+  const star = new THREE.Mesh(starGeo(3.6, 1.5, 0.9), glowMat(mix(P.yellow, P.peach, 0.15), 1.0, 1.9));
+  star.position.set(0, topY + 2.6, 0); scene.add(star);
+  halo(mix(P.yellow, P.peach, 0.3), 20, 0, topY + 2.6, 0, 0.03, 0.32);
+  animators.push((t) => { star.rotation.y = t * 0.3; });
+  // presents under the tree
+  for (let i = 0; i < 18; i++) {
+    const a = rnd() * 6.28, r = 10.5 + rnd() * 5, x = Math.cos(a) * r, z = Math.sin(a) * r, s = 1.3 + rnd() * 1.4, ry = rnd() * 6.28, col = pick(ACCENTS), rib = rnd() < 0.5 ? 'gold' : 'white';
+    S.push(place(box(s, s * 0.8, s, 0, s * 0.4, 0, col), x, G0, z, ry), place(box(s + 0.06, s * 0.8 + 0.06, s * 0.2, 0, s * 0.4, 0, rib), x, G0, z, ry), place(box(s * 0.2, s * 0.8 + 0.06, s + 0.06, 0, s * 0.4, 0, rib), x, G0, z, ry));
+  }
+  // tent of garlands from the treetop to a ring of lamp posts
+  const apex = new THREE.Vector3(0, topY - 2, 0);
+  for (let k = 0; k < 12; k++) {
+    const a = k / 12 * Math.PI * 2, x = Math.cos(a) * 44, z = Math.sin(a) * 44;
+    S.push(cyl(0.35, 0.5, 8, 6, x, G0 + 4, z, 'dark'), box(1.6, 0.25, 1.6, x, G0 + 8.2, z, 'dark'));
+    DIM.push(plain(new THREE.SphereGeometry(0.75, 8, 6).translate(x, G0 + 8.9, z)));
+    garland(apex, new THREE.Vector3(x, G0 + 8.4, z), 5, 2.6, 0.38);
+    const b = (k + 1) / 12 * Math.PI * 2; garland(new THREE.Vector3(x, G0 + 8.4, z), new THREE.Vector3(Math.cos(b) * 44, G0 + 8.4, Math.sin(b) * 44), 2.2, 2.4, 0.34);
+  }
+  addLight(P.peach, 160, 100, 0, G0 + 22, 0);
+  keepClear.push({ x: 0, z: 0, r: 92 });
+  SIGHTS.push(new THREE.Vector3(0, G0 + 30, 0));
+}
+// toy train
+{
+  const R = 62;
+  for (const rr of [R - 1, R + 1]) S.push(tint(new THREE.TorusGeometry(rr, 0.2, 4, 180).rotateX(Math.PI / 2).translate(0, G0 + 0.55, 0), 'metal'));
+  for (let i = 0; i < 140; i++) { const a = i / 140 * Math.PI * 2; S.push(place(box(3.4, 0.35, 0.8, 0, G0 + 0.3, 0, 'wood'), Math.cos(a) * R, 0, Math.sin(a) * R, -a + Math.PI / 2)); }
+  const wheels = (len) => { const o = []; for (const sx of [-1.15, 1.15]) for (const sz of [-len * 0.3, len * 0.3]) o.push(tint(new THREE.CylinderGeometry(0.6, 0.6, 0.3, 10).rotateZ(Math.PI / 2).translate(sx, 0.75, sz), 'gold')); return o; };
+  const engine = merged([
+    box(2.4, 0.6, 6, 0, 1.1, 0, 'dark'), tint(new THREE.CylinderGeometry(1.05, 1.05, 3.6, 12).rotateX(Math.PI / 2).translate(0, 2.4, 1.0), 'red'),
+    box(2.6, 2.6, 2.1, 0, 2.6, -1.8, acc('green', 0.25, 0.2)), box(3.0, 0.3, 2.6, 0, 4.05, -1.8, 'red'),
+    cyl(0.35, 0.55, 1.4, 8, 0, 4.0, 2.2, 'dark'), cyl(0.5, 0.5, 0.25, 8, 0, 4.75, 2.2, 'gold'), box(2.6, 0.3, 0.3, 0, 0.7, 3.1, 'gold'), ...wheels(6),
+  ]);
+  const cars = [];
+  const mk = (geo, extra) => { const g = new THREE.Group(); g.add(new THREE.Mesh(geo, DUAL)); if (extra) extra(g); scene.add(g); return g; };
+  cars.push(mk(engine, (g) => { const hl = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 6), W.winMat); hl.position.set(0, 2.4, 2.85); g.add(hl); }));
+  const wc = [acc('blue', 0.25), acc('yellow', 0.15), acc('mauve', 0.3), acc('teal', 0.2)];
+  for (let k = 0; k < 4; k++) {
+    const open = k === 2, parts = [box(2.4, 0.5, 5.2, 0, 1.05, 0, 'dark'), ...wheels(5.2)];
+    if (open) { parts.push(box(2.6, 1.0, 5.0, 0, 1.8, 0, wc[k])); for (let i = 0; i < 6; i++) { const s = 0.9 + rnd() * 0.6; parts.push(box(s, s, s, (rnd() - 0.5) * 1.2, 2.4 + s / 2, (rnd() - 0.5) * 3.6, pick(ACCENTS))); } }
+    else parts.push(box(2.6, 2.4, 5.0, 0, 2.5, 0, wc[k]), box(3.0, 0.3, 5.4, 0, 3.85, 0, 'white'));
+    cars.push(mk(merged(parts), open ? null : (g) => { for (const sx of [1, -1]) for (const sz of [-1.4, 1.4]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.1), W.winMatDim); w.position.set(sx * 1.32, 2.7, sz); w.rotation.y = sx * Math.PI / 2; g.add(w); } }));
+  }
+  const puffs = [];
+  for (let i = 0; i < 8; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, transparent: true, opacity: 0, depthWrite: false })); scene.add(sp); puffs.push({ sp, k: i / 8, x: 0, y: 0, z: 0 }); }
+  let lastK = 0;
+  animators.push((t, night) => {
+    const phi = t * 0.1;
+    cars.forEach((g, i) => { const a = phi - i * 0.105; g.position.set(Math.cos(a) * R, G0 + 0.4, Math.sin(a) * R); g.rotation.y = -a; });
+    const cp = new THREE.Vector3(0, 4.9, 2.2).applyAxisAngle(Y, -phi).add(cars[0].position);
+    for (const p of puffs) {
+      const k = (p.k + t * 0.35) % 1;
+      if (k < 0.05 && p.reset !== true) { p.x = cp.x; p.y = cp.y; p.z = cp.z; p.reset = true; } else if (k > 0.05) p.reset = false;
+      p.sp.position.set(p.x, p.y + k * 7, p.z); const sc = 1 + k * 4; p.sp.scale.set(sc, sc, 1);
+      p.sp.material.opacity = 0.55 * Math.sin(Math.PI * k); p.sp.material.color.copy(L.base).lerp(P.o1, night);
+    }
+  });
+}
+// market stalls between the roads, and candy canes guarding each road's mouth
+const ALLSP = [...SPOKES, -Math.PI / 2].map((a) => Math.atan2(Math.sin(a), Math.cos(a))).sort((a, b) => a - b);
+const SELLERS = [];
+{
+  for (let i = 0; i < ALLSP.length; i++) {
+    const a0 = ALLSP[i], a1 = i + 1 < ALLSP.length ? ALLSP[i + 1] : ALLSP[0] + Math.PI * 2;
+    for (const f of (a1 - a0 > 1.2 ? [0.33, 0.67] : [0.5])) {
+      const a = a0 + (a1 - a0) * f, x = Math.cos(a) * 73, z = Math.sin(a) * 73, ry = Math.atan2(Math.cos(a), Math.sin(a));
+      const c1 = pick(ACCENTS), c2 = 'white', parts = [
+        box(8, 4.4, 0.4, 0, 2.2, -2.3, 'wood'), box(8, 1.3, 1.2, 0, 0.65, 1.8, 'wood'), box(8.4, 0.2, 1.5, 0, 1.4, 1.8, 'woodDark'),
+        ...[-3.8, 3.8].flatMap((px) => [box(0.3, 4.4, 0.3, px, 2.2, 2.3, 'woodDark'), box(0.3, 4.4, 0.3, px, 2.2, -2.3, 'woodDark')]),
+      ];
+      for (let s = 0; s < 8; s++) parts.push(tint(new THREE.BoxGeometry(1.02, 0.16, 5.6).rotateX(-0.32).translate(-3.57 + s * 1.02, 4.7, 0.3), s % 2 ? c1 : c2));
+      for (let g = 0; g < 7; g++) { const gx = -3.2 + g * 1.05 + (rnd() - 0.5) * 0.3, s = 0.5 + rnd() * 0.5; parts.push(rnd() < 0.5 ? box(s, s, s, gx, 1.5 + s / 2, 1.8, pick(ACCENTS)) : ball(s * 0.6, gx, 1.5 + s * 0.6, 1.8, pick(ACCENTS), 0)); }
+      for (const p of parts) S.push(place(p, x, G0, z, ry));
+      DIM.push(place(plain(new THREE.PlaneGeometry(7.2, 0.5).translate(0, 3.9, 2.45)), x, G0, z, ry));
+      for (let b = 0; b < 7; b++) bulb(toWorld(-3.4 + b * 1.13, 3.8 - 0.25 * Math.sin(b / 6 * Math.PI), 3.3, x, G0, z, ry), 0.28);
+      SELLERS.push({ ...toWorld(0, 0, 0.1, x, G0, z, ry), ry });
+    }
+  }
+  const caneGeo = (() => {
+    const p = []; for (let i = 0; i < 7; i++) p.push(cyl(0.45, 0.45, 1.2, 8, 0, 0.6 + i * 1.2, 0, i % 2 ? 'white' : 'red'));
+    for (let j = 0; j < 6; j++) { const th = j * Math.PI / 6 + Math.PI / 12; p.push(tint(new THREE.CylinderGeometry(0.45, 0.45, 0.78, 8).rotateZ(th).translate(-1.3 + 1.3 * Math.cos(th), 8.4 + 1.3 * Math.sin(th), 0), j % 2 ? 'red' : 'white')); }
+    p.push(cyl(0.45, 0.45, 1.0, 8, -2.6, 7.95, 0, 'white'));
+    return merged(p).scale(1.3, 1.3, 1.3);
+  })();
+  for (const a of ALLSP) {
+    const nx = -Math.sin(a), nz = Math.cos(a);
+    for (const s of [1, -1]) { const x = Math.cos(a) * 84 + nx * 6.2 * s, z = Math.sin(a) * 84 + nz * 6.2 * s; S.push(place(caneGeo.clone(), x, groundAt(x, z) - 0.2, z, Math.atan2(-s * nz, s * nx))); }
+  }
+}
+
+// ---------- the workshop, its present conveyor and the giant sack ----------
+const WS = { cx: 0, cz: -125 };
+{
+  const { cx, cz } = WS, w = 100, d = 36, H = 20, base = W.groundMin(cx, cz, 0, w, d) - 1, front = cz + d / 2;
+  S.push(box(w, H, d, cx, base + H / 2, cz, 'red'));
+  for (const y of [base + 0.8, base + H - 0.6]) S.push(box(w + 0.6, 1.2, d + 0.6, cx, y, cz, 'trim'));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) S.push(box(1.4, H, 1.4, cx + sx * w / 2, base + H / 2, cz + sz * d / 2, 'trim'));
+  S.push(tint(W.gable(d + 3, w + 3, 13).rotateY(Math.PI / 2).translate(cx, base + H, cz), 'snow'));
+  for (const row of [6.5, 14]) for (let x = -45; x <= 45; x += 9) {
+    if (Math.abs(x) < 10 && row < 10) continue;
+    GLOW.push(plain(new THREE.PlaneGeometry(3.2, 4.2).translate(cx + x, base + row, front + 0.06)));
+    S.push(box(3.8, 0.4, 0.5, cx + x, base + row - 2.3, front + 0.2, 'trim'));
+    (rnd() < 0.3 ? DIM : GLOW).push(plain(new THREE.PlaneGeometry(3.2, 4.2).rotateY(Math.PI).translate(cx + x, base + row, cz - d / 2 - 0.06)));
+  }
+  // round skylights in the roof (the workshop glows from above at night)
+  for (let x = -40; x <= 40; x += 16) DIM.push(plain(new THREE.PlaneGeometry(4, 3).rotateX(-Math.PI / 2 + Math.atan2(13, d / 2 + 1.5)).translate(cx + x, base + H + 6.8, cz + 9.2)));
+  // side wings
+  for (const sx of [-1, 1]) {
+    const wx = cx + sx * 62, wz = cz + 7, ww = 24, wd = 50, wH = 15, wb = W.groundMin(wx, wz, 0, ww, wd) - 1;
+    S.push(box(ww, wH, wd, wx, wb + wH / 2, wz, 'red'), box(ww + 0.6, 1.0, wd + 0.6, wx, wb + wH - 0.5, wz, 'trim'));
+    S.push(tint(W.gable(ww + 2.5, wd + 2.5, 10).translate(wx, wb + wH, wz), 'snow'));
+    for (let z = wz - 18; z <= wz + 18; z += 9) for (const side of [1, -1]) { if (side === sx && z === wz) continue; GLOW.push(plain(new THREE.PlaneGeometry(3, 4).rotateY(side * Math.PI / 2).translate(wx + side * (ww / 2 + 0.06), wb + 7.5, z))); }
+    GLOW.push(plain(new THREE.PlaneGeometry(6, 5).translate(wx, wb + 7.5, wz + wd / 2 + 0.06)));
+    // gable lights on the wing fronts
+    const gz = wz + wd / 2 + 1.3, ey = wb + wH;
+    garland(new THREE.Vector3(wx - ww / 2 - 1.2, ey, gz), new THREE.Vector3(wx, ey + 10, gz), 0.4, 2.0, 0.34);
+    garland(new THREE.Vector3(wx, ey + 10, gz), new THREE.Vector3(wx + ww / 2 + 1.2, ey, gz), 0.4, 2.0, 0.34);
+  }
+  // clock tower
+  const tz = front + 2, tw = 16, tH = 52, tcz = tz - tw / 2 + 4;
+  S.push(box(tw, tH, tw, cx, base + tH / 2, tcz, 'red'));
+  for (const y of [base + H + 0.5, base + tH - 0.6]) S.push(box(tw + 0.8, 1.2, tw + 0.8, cx, y, tcz, 'trim'));
+  S.push(tint(new THREE.ConeGeometry(tw * 0.78, 18, 4).rotateY(Math.PI / 4).translate(cx, base + tH + 9, tcz), 'roofRed'));
+  S.push(tint(new THREE.ConeGeometry(tw * 0.3, 6.5, 4).rotateY(Math.PI / 4).translate(cx, base + tH + 14.6, tcz), 'snow'));
+  const door = new THREE.Mesh(new THREE.PlaneGeometry(9, 11), glowMat(P.peach, 0.3, 1.0)); door.position.set(cx, base + 5.5, tz + 4.07); scene.add(door);
+  S.push(box(11, 1.2, 0.8, cx, base + 11.4, tz + 4.2, 'gold'));
+  for (const y of [base + 26, base + 33]) GLOW.push(plain(new THREE.PlaneGeometry(3, 4.5).translate(cx, y, tz + 4.06)));
+  // a big wreath with a bow over the door
+  S.push(tint(new THREE.TorusGeometry(3.2, 0.9, 6, 18).translate(cx, base + 17.5, tz + 4.5), 'treeA'));
+  S.push(tint(new THREE.ConeGeometry(0.9, 1.6, 4).rotateZ(Math.PI / 2).translate(cx - 0.8, base + 14.6, tz + 5.2), 'red'), tint(new THREE.ConeGeometry(0.9, 1.6, 4).rotateZ(-Math.PI / 2).translate(cx + 0.8, base + 14.6, tz + 5.2), 'red'));
+  for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2; bulb(new THREE.Vector3(cx + Math.cos(a) * 3.2, base + 17.5 + Math.sin(a) * 3.2, tz + 5.5), 0.3); }
+  // clock with the real time
+  const fy = base + tH - 8, fz = tz + 4.1;
+  const face = new THREE.Mesh(new THREE.CircleGeometry(5, 24), glowMat(mix(P.rose, P.yellow, 0.35), 1.0, 0.95)); face.position.set(cx, fy, fz); scene.add(face);
+  S.push(tint(new THREE.TorusGeometry(5.2, 0.4, 4, 24).translate(cx, fy, fz), 'gold'));
+  for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; S.push(tint(new THREE.BoxGeometry(0.35, 0.8, 0.1).rotateZ(-a).translate(cx + Math.sin(a) * 4.2, fy + Math.cos(a) * 4.2, fz + 0.05), 'dark')); }
+  const handMat = new THREE.MeshBasicMaterial({ color: pal.dark[0].clone() });
+  const hourH = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2.8, 0.15).translate(0, 1.2, 0), handMat), minH = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4.1, 0.15).translate(0, 1.8, 0), handMat);
+  for (const h of [hourH, minH]) { h.position.set(cx, fy, fz + 0.15); scene.add(h); }
+  animators.push(() => { const d = new Date(), m = d.getMinutes() + d.getSeconds() / 60, h = (d.getHours() % 12) + m / 60; minH.rotation.z = -m / 60 * Math.PI * 2; hourH.rotation.z = -h / 12 * Math.PI * 2; });
+  const towerStar = new THREE.Mesh(starGeo(2.2, 0.9, 0.6), glowMat(P.yellow, 0.9, 1.6)); towerStar.position.set(cx, base + tH + 20.5, tcz); scene.add(towerStar);
+  animators.push((t) => { towerStar.rotation.y = -t * 0.25; });
+  // icicles along the front eave, garlands under it
+  for (let x = -w / 2 - 1; x <= w / 2 + 1; x += 1.4) { if (Math.abs(x) < tw / 2 + 0.5) continue; const len = 0.6 + rnd() * 1.8; S.push(tint(new THREE.ConeGeometry(0.2, len, 5).rotateX(Math.PI).translate(cx + x, base + H - len / 2, front + 1.4), 'ice')); }
+  for (const [x0, x1] of [[-w / 2 - 1.5, -tw / 2 - 0.5], [tw / 2 + 0.5, w / 2 + 1.5]]) {
+    const n = 4; for (let i = 0; i < n; i++) garland(new THREE.Vector3(x0 + (x1 - x0) * i / n, base + H - 0.2, front + 1.7), new THREE.Vector3(x0 + (x1 - x0) * (i + 1) / n, base + H - 0.2, front + 1.7), 1.6, 2.0, 0.36);
+  }
+  // pastel "magic" smoke from the workshop chimneys
+  const puffC = [['pink', 'mauve'], ['teal', 'green'], ['lav', 'blue'], ['peach', 'yellow']];
+  const chims = [-30, 30].map((sx) => { S.push(box(3, 14, 3, cx + sx, base + H + 6, cz - 6, 'redDeep'), box(3.8, 0.6, 3.8, cx + sx, base + H + 13.2, cz - 6, 'snow')); return new THREE.Vector3(cx + sx, base + H + 13.5, cz - 6); });
+  const puffs = [];
+  for (const c of chims) for (let i = 0; i < 14; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, transparent: true, opacity: 0, depthWrite: false })); scene.add(sp); puffs.push({ sp, c, k: i / 14, pc: puffC[i % 4], wob: rnd() * 6 }); }
+  animators.push((t, night) => {
+    for (const p of puffs) {
+      const k = (p.k + t * 0.035) % 1, [a, b] = p.pc;
+      p.sp.position.set(p.c.x + k * 16 + Math.sin(t * 0.7 + p.wob + k * 6) * 2.5, p.c.y + k * 40, p.c.z + k * 8);
+      const sc = 3 + k * 13; p.sp.scale.set(sc, sc, 1); p.sp.material.opacity = 0.42 * Math.sin(Math.PI * k);
+      p.sp.material.color.copy(mix(L[a], L.base, 0.55)).lerp(mix(P[b], P.s1, 0.5), night);
+    }
+  });
+  // presents piled by the door
+  for (let i = 0; i < 34; i++) {
+    const side = i % 2 ? 1 : -1, x = cx + side * (9 + rnd() * 12), z = tz + 7 + rnd() * 9, s = 1.4 + rnd() * 1.8, sh = s * (0.7 + rnd() * 0.5);
+    const y = height(x, z) - 0.1 + (rnd() < 0.35 ? 1.5 : 0), ry = rnd() * 6.28, col = pick(ACCENTS), rib = rnd() < 0.5 ? 'gold' : 'white';
+    S.push(place(box(s, sh, s, 0, sh / 2, 0, col), x, y, z, ry), place(box(s + 0.08, sh + 0.08, s * 0.18, 0, sh / 2, 0, rib), x, y, z, ry), place(box(s * 0.18, sh + 0.08, s + 0.08, 0, sh / 2, 0, rib), x, y, z, ry));
+  }
+  addLight(P.peach, 150, 60, cx, base + 10, tz + 14);
+  keepClear.push({ x: cx, z: cz, r: 92 });
+  SIGHTS.push(new THREE.Vector3(cx, base + 34, tz - 4));
+  WS.base = base; WS.door = new THREE.Vector3(cx, base, tz + 4.5);
+
+  // conveyor from the east wing's side hatch to the giant sack
+  const x0 = 74.5, x1 = 104, bz = cz + 7, by = base + 6, sx = 112, sg = groundAt(sx, bz);
+  DIM.push(plain(new THREE.PlaneGeometry(4, 4).rotateY(Math.PI / 2).translate(74.1 + 0.1, by + 1.5, bz)));
+  S.push(box(x1 - x0, 0.6, 3.2, (x0 + x1) / 2, by, bz, 'dark'));
+  for (const s of [-1, 1]) S.push(box(x1 - x0, 0.5, 0.25, (x0 + x1) / 2, by + 0.6, bz + s * 1.7, 'gold'));
+  for (let x = x0 + 2; x < x1; x += 6) { const g = groundAt(x, bz); for (const s of [-1, 1]) S.push(box(0.4, by - g, 0.4, x, (by + g) / 2, bz + s * 1.4, 'metal')); }
+  for (let x = x0 + 1; x < x1; x += 1.6) S.push(cyl(0.25, 0.25, 3.0, 6, 0, 0, 0, 'metal').rotateX(Math.PI / 2).translate(x, by + 0.25, bz));
+  // the sack: big, round, tied with gold, mouth open
+  S.push(tint(new THREE.IcosahedronGeometry(1, 2).scale(7, 8, 7).translate(sx, sg + 6.5, bz), 'sack'));
+  S.push(tint(new THREE.CylinderGeometry(3.6, 2.6, 2.6, 10).translate(sx, sg + 15, bz), 'sack'), tint(new THREE.TorusGeometry(2.7, 0.45, 5, 12).rotateX(Math.PI / 2).translate(sx, sg + 13.8, bz), 'gold'));
+  S.push(tint(new THREE.CircleGeometry(3.3, 10).rotateX(-Math.PI / 2).translate(sx, sg + 16.31, bz), 'dark'));
+  const presents = new THREE.InstancedMesh(tint(new THREE.BoxGeometry(1.5, 1.2, 1.5).translate(0, 0.6, 0), D(new THREE.Color(1, 1, 1), new THREE.Color(0.8, 0.8, 0.9))), DUAL, 12);
+  const pcol = new THREE.Color(); for (let i = 0; i < 12; i++) presents.setColorAt(i, pcol.copy(pick(ACCENTS)[0]));
+  scene.add(presents);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), e = new THREE.Euler();
+  animators.push((t) => {
+    for (let i = 0; i < 12; i++) {
+      const T = 14, k = ((t + i * T / 12) % T) / T, belt = 12.5 / 14;
+      if (k < belt) { const u = k / belt; v.set(x0 + 1 + (x1 - x0 - 1) * u, by + 0.3, bz); q.setFromEuler(e.set(0, i, 0)); sc.setScalar(1); }
+      else { const u = (k - belt) / (1 - belt); v.set(x1 + (sx - x1) * u, by + 0.3 + (sg + 16.5 - by) * u + 5 * Math.sin(Math.PI * u), bz); q.setFromEuler(e.set(u * 3, i, u * 2)); sc.setScalar(Math.max(0.001, 1 - u * u)); }
+      presents.setMatrixAt(i, m4.compose(v, q, sc));
+    }
+    presents.instanceMatrix.needsUpdate = true;
+  });
+  keepClear.push({ x: sx, z: bz, r: 18 }, { x: 90, z: bz, r: 12 });
+  SIGHTS.push(new THREE.Vector3(sx, sg + 10, bz));
+  WS.sack = new THREE.Vector3(sx - 6, sg, bz + 7);
+}
+
+// ---------- the striped pole on its roundabout ----------
+{
+  const { x: px, z: pz } = POLE, g = height(px, pz);
+  RD.push(tint(new THREE.CircleGeometry(12, 32).rotateX(-Math.PI / 2).translate(px, g + 0.2, pz), 'cobble'));
+  S.push(cyl(5.5, 6, 0.6, 24, px, g + 0.3, pz, 'snow'));
+  for (let i = 0; i < 12; i++) S.push(cyl(1.1, 1.1, 2, 12, px, g + 1 + i * 2, pz, i % 2 ? 'white' : 'red'));
+  S.push(ball(2.4, px, g + 26.2, pz, 'gold'));
+  S.push(box(8, 2.2, 0.4, px, g + 15, pz + 1.3, 'trim'), box(8, 2.2, 0.4, px, g + 12, pz - 1.3, 'trim'));
+  halo(P.yellow, 10, px, g + 26.2, pz, 0, 0.18);
+  for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2; bulb(new THREE.Vector3(px + Math.cos(a) * 5.6, g + 0.9, pz + Math.sin(a) * 5.6), 0.3); }
+  keepClear.push({ x: px, z: pz, r: 14 });
+  SIGHTS.push(new THREE.Vector3(px, g + 14, pz));
+}
+
+// ---------- house builder (doors face the road; snowy gable roofs; lights, icicles, shutters, wreaths) ----------
+let chimneyCount = 0;
+function elfHouse(x, z, ry, w, d, H, o = {}) {
+  const [lo, hi] = W.groundRange(x, z, ry, w, d), base = lo - 1.2, Hb = H + 1.2 + (hi - lo), rh = o.rh ?? w * (0.5 + rnd() * 0.22), fl = Hb - H;
+  const P_ = (g) => S.push(place(g, x, base, z, ry));
+  P_(box(w, Hb, d, 0, Hb / 2, 0, o.wall));
+  P_(box(w + 0.3, 0.6, d + 0.3, 0, fl + 0.3, 0, o.trim ?? 'trim'));
+  P_(tint(W.gable(w + 1.6, d + 1.6, rh).translate(0, Hb, 0), o.roof ?? 'snow'));
+  if (o.roofEdge) P_(tint(W.gable(w + 1.9, 0.5, rh + 0.25).translate(0, Hb - 0.15, d / 2 + 0.85), o.roofEdge));
+  const dc = o.door ?? pick(ACCENTS);
+  P_(box(1.8, 2.8, 0.3, 0, fl + 1.4, d / 2 + 0.1, dc)); P_(box(0.2, 0.2, 0.2, 0.55, fl + 1.4, d / 2 + 0.3, 'gold'));
+  P_(box(2.6, 0.3, 1.4, 0, fl + 3.1, d / 2 + 0.6, o.roof ?? 'snow'));
+  if (o.wreath ?? rnd() < 0.5) P_(tint(new THREE.TorusGeometry(0.5, 0.17, 5, 10).translate(0, fl + 2.1, d / 2 + 0.3), 'treeA'));
+  const wy = fl + H * 0.55, shutter = o.shutter ?? pick(ACCENTS);
+  for (const sx of w > 8 ? [-w / 4 - 0.4, w / 4 + 0.4] : []) {
+    win(1.5, 1.6, 0, sx, wy, d / 2 + 0.06, x, base, z, ry);
+    for (const s of [-1, 1]) P_(box(0.55, 1.7, 0.15, sx + s * 1.05, wy, d / 2 + 0.1, shutter));
+    P_(box(1.9, 0.2, 0.5, sx, wy - 0.9, d / 2 + 0.2, 'snow'));
+  }
+  for (const s of [1, -1]) { if (rnd() < 0.3) continue; win(1.6, 1.8, s * Math.PI / 2, s * (w / 2 + 0.06), wy, rnd() < 0.5 ? 0 : -d / 5, x, base, z, ry); }
+  if (rnd() < 0.6) win(1.6, 1.8, Math.PI, 0, wy, -d / 2 - 0.06, x, base, z, ry);
+  win(1.2, 1.0, 0, 0, Hb + rh * 0.35, d / 2 + 0.86, x, base, z, ry, rnd() < 0.5);   // attic window in the gable
+  if (o.chimney ?? rnd() < 0.55) {
+    const cx = w * 0.24, cz = -d * 0.2, ch = Hb + rh * 0.62 + 2.5;
+    P_(box(1.4, ch, 1.4, cx, ch / 2, cz, o.chimneyC ?? 'woodDark')); P_(box(1.8, 0.35, 1.8, cx, ch, cz, 'snow'));
+    if (chimneyCount++ < 16) smokeSources.push(toWorld(cx, ch + 0.5, cz, x, base, z, ry));
+  }
+  if (o.icicles ?? rnd() < 0.45) for (const s of [1, -1]) for (let lz = -d / 2 - 0.6; lz <= d / 2 + 0.6; lz += 1.3) { const len = 0.4 + rnd() * 1.1; P_(tint(new THREE.ConeGeometry(0.16, len, 5).rotateX(Math.PI).translate(s * (w / 2 + 0.8), Hb - len / 2, lz), 'ice')); }
+  if (o.lights ?? rnd() < 0.65) {
+    const gz = d / 2 + 0.9, a = toWorld(-(w / 2 + 0.8), Hb, gz, x, base, z, ry), b = toWorld(0, Hb + rh, gz, x, base, z, ry), c = toWorld(w / 2 + 0.8, Hb, gz, x, base, z, ry);
+    garland(a, b, 0.3, 1.6, 0.3); garland(b, c, 0.3, 1.6, 0.3);
+  }
+  return { base, Hb, rh, door: toWorld(0, 0, d / 2 + 1.2, x, base, z, ry), front: d / 2 };
+}
+function snowman(x, z, ry, s = 1) {
+  const g = groundAt(x, z) - 0.3;
+  const parts = [ball(1.6, 0, 1.4, 0, 'snow'), ball(1.15, 0, 3.6, 0, 'snow'), ball(0.8, 0, 5.1, 0, 'snow'),
+    tint(new THREE.ConeGeometry(0.15, 0.8, 5).rotateX(Math.PI / 2).translate(0, 5.1, 1.05), 'carrot'),
+    box(0.14, 0.14, 0.1, -0.28, 5.35, 0.72, 'dark'), box(0.14, 0.14, 0.1, 0.28, 5.35, 0.72, 'dark'),
+    box(0.16, 0.16, 0.1, 0, 3.9, 1.1, 'dark'), box(0.16, 0.16, 0.1, 0, 3.4, 1.12, 'dark'),
+    tint(new THREE.TorusGeometry(0.75, 0.22, 5, 10).rotateX(Math.PI / 2).translate(0, 4.5, 0), pick(ACCENTS)),
+    tint(new THREE.BoxGeometry(0.12, 1.8, 0.12).rotateZ(1.0).translate(1.6, 4.2, 0), 'woodDark'), tint(new THREE.BoxGeometry(0.12, 1.8, 0.12).rotateZ(-1.2).translate(-1.6, 4.0, 0), 'woodDark')];
+  if (rnd() < 0.5) parts.push(cyl(0.75, 0.75, 0.12, 10, 0, 5.75, 0, 'dark'), cyl(0.5, 0.5, 0.9, 10, 0, 6.2, 0, 'dark'));
+  else parts.push(cone(0.6, 1.2, 7, 0, 6.2, 0, pick(ACCENTS)), ball(0.2, 0, 6.85, 0, 'white', 0));
+  for (const p of parts) S.push(place(p.scale(s, s, s), x, g, z, ry));
+}
+
+// ---------- Santa's cottage ----------
+{
+  const x = 118, z = -48, ry = Math.atan2(-x, -z);
+  const h = elfHouse(x, z, ry, 24, 16, 10, { wall: D(mix(L.base, L.rose, 0.35), mix(P.rose, P.s0, 0.5)), rh: 9, chimney: false, lights: true, icicles: true, wreath: true, door: 'red', shutter: acc('green', 0.25) });
+  const c = toWorld(6, 0, -3, x, h.base, z, ry), ch = h.Hb + 9;
+  S.push(box(3.2, ch, 3.2, c.x, h.base + ch / 2, c.z, 'redDeep'), box(3.8, 0.6, 3.8, c.x, h.base + ch, c.z, 'snow'));
+  smokeSources.push(new THREE.Vector3(c.x, h.base + ch + 0.6, c.z));
+  const ra = Math.atan2(z, x); ribbon([[h.door.x, h.door.z], [Math.cos(ra) * 79, Math.sin(ra) * 79]], 3, 'path', 0.2);
+  // a sign and a bench with a lantern by the door
+  const sgn = toWorld(4.5, 0, h.front + 3.5, x, h.base, z, ry); S.push(cyl(0.15, 0.15, 3, 5, sgn.x, groundAt(sgn.x, sgn.z) + 1.5, sgn.z, 'woodDark'), place(box(2.4, 1.0, 0.2, 0, 0, 0, 'red'), sgn.x, groundAt(sgn.x, sgn.z) + 3, sgn.z, ry));
+  addLight(P.peach, 110, 40, h.door.x, h.base + 6, h.door.z);
+  keepClear.push({ x, z, r: 24 });
+  SIGHTS.push(new THREE.Vector3(x, h.base + h.Hb, z));
+}
+
+// ---------- reindeer ----------
+function deerGeo() {
+  const p = [box(1.1, 1.1, 2.6, 0, 2.0, 0, 'fur'), tint(new THREE.BoxGeometry(0.5, 1.4, 0.55).rotateX(0.55).translate(0, 2.85, 1.35), 'fur'),
+    box(0.62, 0.62, 1.05, 0, 3.55, 1.75, 'fur'), box(0.32, 0.3, 0.3, 0, 3.5, 2.32, 'furDark'), box(0.5, 0.5, 0.3, 0, 2.3, -1.4, 'furLight'), box(1.12, 0.5, 1.4, 0, 1.6, 0.4, 'furLight')];
+  for (const sx of [-0.35, 0.35]) for (const sz of [-1.0, 1.0]) p.push(box(0.24, 1.6, 0.24, sx, 0.8, sz, 'furDark'));
+  for (const s of [-1, 1]) { p.push(tint(new THREE.BoxGeometry(0.12, 1.1, 0.12).rotateZ(s * 0.5).translate(s * 0.4, 4.3, 1.55), 'antler')); p.push(tint(new THREE.BoxGeometry(0.1, 0.6, 0.1).rotateZ(-s * 0.3).translate(s * 0.72, 4.75, 1.6), 'antler')); }
+  return merged(p);
+}
+const DEER = deerGeo(), HOOVES = [[-0.35, 0.05, -1], [0.35, 0.05, -1], [-0.35, 0.05, 1], [0.35, 0.05, 1]].map((a) => new THREE.Vector3(...a));
+{
+  // the stable faces the west road; the paddock lies across it
+  const sx = -128, sz = -40, ry = 0;
+  const h = elfHouse(sx, sz, ry, 34, 15, 8, { wall: 'redDeep', rh: 7, chimney: false, lights: true, icicles: true, door: 'wood', shutter: 'white' });
+  S.push(place(box(6, 6, 0.3, 0, h.Hb - 8 + 3, 7.65, 'wood'), sx, h.base, sz, ry), place(tint(new THREE.BoxGeometry(0.3, 8, 0.2).rotateZ(0.78).translate(0, h.Hb - 5, 7.85), 'white'), sx, h.base, sz, ry), place(tint(new THREE.BoxGeometry(0.3, 8, 0.2).rotateZ(-0.78).translate(0, h.Hb - 5, 7.85), 'white'), sx, h.base, sz, ry));
+  ribbon([[sx, sz + 8.5], [sx, -12.5]], 4, 'path', 0.2);
+  addLight(P.yellow, 90, 40, sx, h.base + 12, sz + 14);
+  const px = -128, pz = 15, pw = 46, pd = 28;
+  const corners = [[-pw / 2, -pd / 2], [pw / 2, -pd / 2], [pw / 2, pd / 2], [-pw / 2, pd / 2]];
+  for (let c = 0; c < 4; c++) {
+    const [ax, az] = corners[c], [bx, bz] = corners[(c + 1) % 4], n = Math.round(Math.hypot(bx - ax, bz - az) / 4);
+    for (let i = 0; i < n; i++) {
+      if (c === 0 && (i === Math.floor(n / 2) || i === Math.floor(n / 2) - 1)) continue;   // gate towards the road
+      const u0 = i / n, u1 = (i + 1) / n, x0 = px + ax + (bx - ax) * u0, z0 = pz + az + (bz - az) * u0, x1 = px + ax + (bx - ax) * u1, z1 = pz + az + (bz - az) * u1;
+      const g = groundAt(x0, z0), len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(x1 - x0, z1 - z0);
+      S.push(box(0.5, 3.2, 0.5, x0, g + 1.2, z0, 'wood'), box(0.62, 0.3, 0.62, x0, g + 2.9, z0, 'snow'));
+      for (const y of [1.2, 2.4]) S.push(place(box(0.25, 0.3, len, 0, 0, len / 2, 'wood'), x0, g + y, z0, ang));
+    }
+  }
+  for (let i = 0; i < 3; i++) { const x = px - pw / 2 + 5 + i * 3.2, z = pz + pd / 2 - 4; S.push(tint(new THREE.CylinderGeometry(1.3, 1.3, 2.2, 10).rotateZ(Math.PI / 2).translate(x, groundAt(x, z) + 1.1, z), 'hay')); }
+  S.push(box(6, 1.2, 1.6, px + 14, groundAt(px + 14, pz + 8) + 0.6, pz + 8, 'wood'), box(5.6, 0.4, 1.2, px + 14, groundAt(px + 14, pz + 8) + 1.25, pz + 8, 'hay'));   // feeding trough
+  // grazing reindeer that wander about
+  const herd = [];
+  for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(DEER, DUAL); scene.add(m); herd.push({ m, x: px + (rnd() - 0.5) * 30, z: pz + (rnd() - 0.5) * 16, tx: 0, tz: 0, wait: rnd() * 8, ry: rnd() * 6.28 }); }
+  animators.push((t, night, dt) => {
+    for (const d of herd) {
+      if (d.wait > 0) { d.wait -= dt; if (d.wait <= 0) { d.tx = px + (rnd() - 0.5) * (pw - 10); d.tz = pz + (rnd() - 0.5) * (pd - 10); } }
+      else { const dx = d.tx - d.x, dz = d.tz - d.z, l = Math.hypot(dx, dz); if (l < 0.5) d.wait = 4 + rnd() * 10; else { d.x += dx / l * dt * 1.6; d.z += dz / l * dt * 1.6; let tr = Math.atan2(dx, dz) - d.ry; tr = Math.atan2(Math.sin(tr), Math.cos(tr)); d.ry += tr * Math.min(1, dt * 3); } }
+      const graze = d.wait > 0 ? 0.25 + 0.05 * Math.sin(t * 2 + d.x) : 0;
+      d.m.position.set(d.x, groundAt(d.x, d.z) - 0.1 + (d.wait > 0 ? 0 : Math.abs(Math.sin(t * 6 + d.z)) * 0.15), d.z); d.m.rotation.set(graze, d.ry, 0, 'YXZ');
+    }
+  });
+  // a calf practising to fly: hop, hover, sparkle, land
+  const calf = new THREE.Mesh(DEER, DUAL); calf.scale.setScalar(0.72); scene.add(calf);
+  const hv = new THREE.Vector3();
+  animators.push((t, night, dt) => {
+    const T = 9, k = (t % T) / T, up = k < 0.6 ? Math.sin(Math.PI * k / 0.6) : 0, cx = px - 6 + 5 * Math.sin(t * 0.05), cz = pz + 2 + 4 * Math.cos(t * 0.07);
+    calf.position.set(cx, groundAt(cx, cz) + 7 * Math.pow(up, 0.8), cz); calf.rotation.set(-0.25 * Math.cos(Math.PI * k / 0.6) * (k < 0.6 ? 1 : 0), t * 0.2, 0.08 * Math.sin(t * 9) * up, 'YXZ');
+    calf.updateMatrixWorld();
+    if (up > 0.05 && Math.random() < dt * 30) { hv.copy(HOOVES[(Math.random() * 4) | 0]); calf.localToWorld(hv); SPK.emit(hv, 0.8, 1.2); }
+  });
+  keepClear.push({ x: sx, z: sz, r: 26 }, { x: px, z: pz, r: 30 });
+  SIGHTS.push(new THREE.Vector3(px, groundAt(px, pz) + 4, pz - 15));
+}
+
+// ---------- the post office, swallowing letters from the sky ----------
+const PO = { x: 22, z: 150 };
+{
+  const ry = -Math.PI / 2, h = elfHouse(PO.x, PO.z, ry, 20, 14, 9, { wall: acc('blue', 0.45, 0.35), door: 'red', rh: 7, chimney: false, lights: true, icicles: true, shutter: 'white', roofEdge: 'red' });
+  const top = toWorld(-3, h.Hb + 4, 0, PO.x, h.base, PO.z, ry);
+  S.push(cyl(1.6, 1.2, 6, 10, top.x, top.y, top.z, 'gold'), cyl(4.5, 1.6, 4, 12, top.x, top.y + 5, top.z, 'red'), tint(new THREE.TorusGeometry(4.5, 0.3, 4, 16).rotateX(Math.PI / 2).translate(top.x, top.y + 7, top.z), 'gold'));
+  const mb = toWorld(6, 0, h.front + 3, PO.x, h.base, PO.z, ry), mg = groundAt(mb.x, mb.z);
+  S.push(cyl(0.2, 0.2, 2.4, 5, mb.x, mg + 1.2, mb.z, 'dark'), place(box(1.6, 1.2, 1.0, 0, 2.8, 0, 'red'), mb.x, mg, mb.z, ry), place(box(1.7, 0.2, 1.1, 0, 3.45, 0, 'snow'), mb.x, mg, mb.z, ry));
+  ribbon([[h.door.x, h.door.z], [3.5, PO.z]], 3, 'path', 0.2);
+  // letters are unlit paper so they read as pale specks against the night sky, not dark ones
+  const paper = new THREE.MeshBasicMaterial({ color: L.base.clone() }), wax = new THREE.MeshBasicMaterial({ color: L.red.clone() });
+  const N = 30, letters = new THREE.InstancedMesh(new THREE.BoxGeometry(2.2, 0.08, 1.5), paper, N), seal = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.1, 0.5), wax, N);
+  scene.add(letters, seal);
+  animators.push((t, night) => { paper.color.copy(L.base).lerp(mix(P.text, P.lav, 0.3).multiplyScalar(0.85), night); wax.color.copy(L.red).lerp(P.red, night); });
+  const info = Array.from({ length: N }, (_, i) => ({ ph: i / N, a0: rnd() * 6.28, r0: 50 + rnd() * 40, h0: 90 + rnd() * 60 }));
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), off = new THREE.Vector3();
+  const mouth = new THREE.Vector3(top.x, top.y + 7.5, top.z);
+  animators.push((t) => {
+    for (let i = 0; i < N; i++) {
+      const L_ = info[i], k = (L_.ph + t / 40) % 1, r = L_.r0 * Math.pow(1 - k, 1.3) + 0.3, a = L_.a0 + k * 7 + t * 0.05;
+      v.set(mouth.x + Math.cos(a) * r, mouth.y + L_.h0 * Math.pow(1 - k, 1.1) + Math.sin(t * 2 + i) * 1.5 * (1 - k), mouth.z + Math.sin(a) * r);
+      q.setFromEuler(e.set(Math.sin(t * 2.6 + i) * 0.7, a + t * 0.8, Math.cos(t * 2.1 + i * 2) * 0.6));
+      const s = k > 0.96 ? (1 - k) / 0.04 : 1; one.setScalar(Math.max(0.001, s));
+      letters.setMatrixAt(i, m4.compose(v, q, one)); off.set(0.4, 0.05, 0.2).applyQuaternion(q).multiplyScalar(s); seal.setMatrixAt(i, m4.compose(v.add(off), q, one));
+    }
+    letters.instanceMatrix.needsUpdate = true; seal.instanceMatrix.needsUpdate = true;
+  });
+  keepClear.push({ x: PO.x, z: PO.z, r: 16 });
+  SIGHTS.push(new THREE.Vector3(PO.x, h.base + h.Hb, PO.z));
+}
+
+// ---------- the skating pond ----------
+const POND = { x: 57, z: 128, r: 22 };
+{
+  const g = groundAt(POND.x, POND.z);
+  RD.push(tint(new THREE.CircleGeometry(POND.r, 48).rotateX(-Math.PI / 2).translate(POND.x, g + 0.3, POND.z), 'pondIce'));
+  S.push(tint(new THREE.TorusGeometry(POND.r + 0.8, 1.3, 5, 40).rotateX(Math.PI / 2).scale(1, 0.5, 1).translate(POND.x, g + 0.2, POND.z), 'snow'));
+  const posts = [];
+  for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2, x = POND.x + Math.cos(a) * (POND.r + 3.5), z = POND.z + Math.sin(a) * (POND.r + 3.5), pg = groundAt(x, z); S.push(cyl(0.2, 0.25, 4.5, 5, x, pg + 2.25, z, 'dark')); posts.push(new THREE.Vector3(x, pg + 4.4, z)); }
+  for (let i = 0; i < 10; i++) garland(posts[i], posts[(i + 1) % 10], 1.2, 1.8, 0.3);
+  for (const a of [0.8, 2.6, 4.4]) { const x = POND.x + Math.cos(a) * (POND.r + 6), z = POND.z + Math.sin(a) * (POND.r + 6), bg = groundAt(x, z), ry = Math.atan2(POND.x - x, POND.z - z); S.push(place(box(4, 0.3, 1.2, 0, 1.1, 0, 'wood'), x, bg, z, ry), place(box(4, 1.0, 0.25, 0, 1.8, -0.55, 'wood'), x, bg, z, ry), place(box(0.3, 1.1, 1.0, -1.7, 0.55, 0, 'dark'), x, bg, z, ry), place(box(0.3, 1.1, 1.0, 1.7, 0.55, 0, 'dark'), x, bg, z, ry)); }
+  ribbon([[POND.x - Math.cos(1.15) * (POND.r + 2), POND.z - Math.sin(1.15) * (POND.r + 2)], [Math.cos(1.15) * 80, Math.sin(1.15) * 80]], 3, 'path', 0.2);
+  addLight(P.lav, 90, 45, POND.x, g + 10, POND.z);
+  keepClear.push({ x: POND.x, z: POND.z, r: POND.r + 9 });
+  SIGHTS.push(new THREE.Vector3(POND.x, g + 2, POND.z));
+}
+
+// ---------- the sledding hill ----------
+const LANES = [];
+{
+  const toC = new THREE.Vector2(-HILL.x, -HILL.z).normalize();
+  for (const rot of [-0.42, 0, 0.42]) {
+    const d = toC.clone().rotateAround(new THREE.Vector2(), rot), a = [HILL.x + d.x * 5, HILL.z + d.y * 5], b = [HILL.x + d.x * 80, HILL.z + d.y * 80];
+    ribbon([a, b], 4.5, 'path', 0.18); LANES.push({ a, b });
+    for (let k = 0; k <= 8; k++) keepClear.push({ x: a[0] + (b[0] - a[0]) * k / 8, z: a[1] + (b[1] - a[1]) * k / 8, r: 9 });
+  }
+  const hh = elfHouse(HILL.x - 6, HILL.z - 10, Math.atan2(-HILL.x, -HILL.z), 9, 7, 4.5, { wall: acc('peach', 0.45, 0.35), lights: true, chimney: true });
+  for (let i = 0; i < 6; i++) { const x = HILL.x + 9 + i * 1.6, z = HILL.z + 4; S.push(place(tint(new THREE.BoxGeometry(1.1, 0.25, 2.4).rotateX(-1.2).translate(0, 1.1, 0), pick(ACCENTS)), x, groundAt(x, z), z, 0.3)); }   // sleds leaning on the hut
+  keepClear.push({ x: HILL.x, z: HILL.z, r: 16 });
+  SIGHTS.push(new THREE.Vector3(HILL.x, height(HILL.x, HILL.z), HILL.z));
+}
+
+// ---------- the gingerbread house ----------
+{
+  const a = 1.95, rp = ringPt(a), x = Math.cos(a) * (RING(a) + 17), z = Math.sin(a) * (RING(a) + 17), ry = Math.atan2(rp[0] - x, rp[1] - z);
+  const h = elfHouse(x, z, ry, 13, 11, 7, { wall: 'ginger', roof: 'white', trim: 'white', door: 'red', shutter: 'white', rh: 7, lights: false, icicles: false, chimney: true, chimneyC: 'ginger' });
+  // icing scallops along the eaves and gumdrops on the ridge
+  for (const s of [-1, 1]) for (let lz = -6; lz <= 6; lz += 1.0) S.push(place(ball(0.35, s * 7.3, h.Hb - 0.2, lz, 'white', 0), x, h.base, z, ry));
+  for (let lz = -5.5; lz <= 5.5; lz += 1.6) S.push(place(ball(0.55, 0, h.Hb + 7.2, lz, pick(ACCENTS), 0), x, h.base, z, ry));
+  for (let i = 0; i < 12; i++) S.push(place(ball(0.3, -5 + rnd() * 10, h.Hb - h.Hb * 0.4 + rnd() * 2, 5.6, pick(ACCENTS), 0), x, h.base, z, ry));
+  // lollipops in the front yard
+  for (const s of [-1, 1]) for (const k of [0, 1]) {
+    const p = toWorld(s * (3 + k * 3), 0, h.front + 3 + k * 2, x, h.base, z, ry), g = groundAt(p.x, p.z);
+    S.push(cyl(0.15, 0.15, 4, 5, p.x, g + 2, p.z, 'white'), place(tint(new THREE.CylinderGeometry(1.2, 1.2, 0.3, 14).rotateX(Math.PI / 2).translate(0, 4.6, 0), pick(ACCENTS)), p.x, g, p.z, ry), place(tint(new THREE.TorusGeometry(0.7, 0.12, 4, 12).translate(0, 4.6, 0.18), 'white'), p.x, g, p.z, ry));
+  }
+  ribbon([[h.door.x, h.door.z], rp], 2.6, 'path', 0.2);
+  keepClear.push({ x, z, r: 15 });
+  SIGHTS.push(new THREE.Vector3(x, h.base + h.Hb, z));
+}
+
+// ---------- the village: elf houses along the ring road and the spokes ----------
+const HOMES = [];
+{
+  const okSite = (x, z, r = 9) => height(x, z) > 4 && W.slopeAt(x, z) < 0.22 && !keepClear.some((k) => Math.hypot(k.x - x, k.z - z) < k.r + r) && !HOMES.some((p) => Math.hypot(p.x - x, p.z - z) < 15.5);
+  const build = (x, z, rx, rz, roadInfo) => {
+    const ry = Math.atan2(rx - x, rz - z), w = 8.5 + rnd() * 3, d = 8 + rnd() * 2, H = 5 + rnd() * 2.5;
+    if (roadDist(x, z) < 9) return;
+    const h = elfHouse(x, z, ry, w, d, H, { wall: pick(PASTEL), roof: rnd() < 0.9 ? 'snow' : D(mix(L.base, L.s0, 0.4), mix(P.text, P.s2, 0.4)) });
+    const dx = rx - h.door.x, dz = rz - h.door.z, l = Math.hypot(dx, dz), ex = rx - dx / l * 3, ez = rz - dz / l * 3;
+    ribbon([[h.door.x, h.door.z], [ex, ez]], 2.2, 'path', 0.22);
+    HOMES.push({ x, z, ry, door: h.door, road: { ...roadInfo, x: ex, z: ez } });
+    if (rnd() < 0.18) snowman(...(() => { const p = toWorld((rnd() < 0.5 ? -1 : 1) * (w / 2 + 3.5), 0, h.front + 2, x, h.base, z, ry); return [p.x, p.z]; })(), ry + (rnd() - 0.5), 0.8 + rnd() * 0.25);
+  };
+  for (let a = 0; a < Math.PI * 2; a += 25 / 205) for (const side of [-1, 1]) {
+    if (rnd() < 0.12) continue;
+    const aa = a + (rnd() - 0.5) * 0.03, [rx, rz] = ringPt(aa), da = 0.002, [qx, qz] = ringPt(aa + da), tx = qx - rx, tz = qz - rz, tl = Math.hypot(tx, tz);
+    const nx = tz / tl, nz = -tx / tl, off = 15 + rnd() * 2, x = rx + nx * off * side, z = rz + nz * off * side;
+    if (okSite(x, z)) build(x, z, rx, rz, { kind: 'ring', a: aa });
+  }
+  for (const a of SPOKES) for (let r = 104; r < RING(a) - 18; r += 21) for (const side of [-1, 1]) {
+    const nx = -Math.sin(a), nz = Math.cos(a), rx = Math.cos(a) * r, rz = Math.sin(a) * r, x = rx + nx * 14 * side, z = rz + nz * 14 * side;
+    if (okSite(x, z)) build(x, z, rx, rz, { kind: 'spoke', a, r });
+  }
+  for (const h of HOMES) keepClear.push({ x: h.x, z: h.z, r: 10 });
+  // snowmen around the square and a few igloos on the outskirts
+  for (let i = 0; i < ALLSP.length; i++) { const a0 = ALLSP[i], a1 = i + 1 < ALLSP.length ? ALLSP[i + 1] : ALLSP[0] + Math.PI * 2, a = (a0 + a1) / 2; snowman(Math.cos(a) * 88, Math.sin(a) * 88, -a + Math.PI / 2 + Math.PI, 1); }
+  for (let i = 0, k = 0; i < 4000 && k < 7; i++) {
+    const a = rnd() * 6.28, r = 245 + rnd() * 110, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (!okSite(x, z, 8) || roadDist(x, z) < 10 || W.slopeAt(x, z) > 0.3) continue;
+    const g = groundAt(x, z) - 0.5, ry = rnd() * 6.28;
+    S.push(tint(new THREE.SphereGeometry(5, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(x, g, z), 'snow'));
+    S.push(place(tint(new THREE.CylinderGeometry(1.9, 1.9, 4, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2).translate(0, 0, 5.2), 'snow'), x, g, z, ry));
+    DIM.push(place(plain(new THREE.CircleGeometry(1.4, 10, 0, Math.PI).translate(0, 0.1, 7.25)), x, g, z, ry));
+    for (let j = 0; j < 3; j++) S.push(tint(new THREE.TorusGeometry(4.3 - j * 1.4, 0.06, 3, 24).rotateX(Math.PI / 2).translate(x, g + 1.5 + j * 1.3, z), 'ice'));
+    keepClear.push({ x, z, r: 9 }); k++;
+  }
+}
+
+// ---------- elves: walkers between homes and the workshop, skaters, sledders, sellers ----------
+function elfGeo(tunic, hat) {
+  return merged([
+    box(0.32, 0.9, 0.34, -0.22, 0.45, 0, 'dark'), box(0.32, 0.9, 0.34, 0.22, 0.45, 0, 'dark'),
+    tint(new THREE.ConeGeometry(0.2, 0.6, 4).rotateX(Math.PI / 2).translate(-0.22, 0.12, 0.35), hat), tint(new THREE.ConeGeometry(0.2, 0.6, 4).rotateX(Math.PI / 2).translate(0.22, 0.12, 0.35), hat),
+    cyl(0.42, 0.75, 1.3, 7, 0, 1.5, 0, tunic), cyl(0.63, 0.66, 0.2, 7, 0, 1.22, 0, 'dark'), box(0.24, 0.2, 0.08, 0, 1.22, 0.65, 'gold'),
+    tint(new THREE.BoxGeometry(0.24, 0.85, 0.24).rotateZ(0.35).translate(-0.62, 1.65, 0), tunic), tint(new THREE.BoxGeometry(0.24, 0.85, 0.24).rotateZ(-0.35).translate(0.62, 1.65, 0), tunic),
+    cyl(0.35, 0.42, 0.25, 7, 0, 2.15, 0, 'white'),
+    ball(0.42, 0, 2.55, 0, 'skin'), box(0.1, 0.12, 0.06, -0.15, 2.62, 0.38, 'dark'), box(0.1, 0.12, 0.06, 0.15, 2.62, 0.38, 'dark'), ball(0.1, 0, 2.5, 0.42, 'carrot', 0),
+    tint(new THREE.ConeGeometry(0.13, 0.5, 4).rotateZ(-Math.PI / 2 + 0.4).translate(0.52, 2.65, 0), 'skin'), tint(new THREE.ConeGeometry(0.13, 0.5, 4).rotateZ(Math.PI / 2 - 0.4).translate(-0.52, 2.65, 0), 'skin'),
+    cyl(0.48, 0.48, 0.18, 8, 0, 2.85, 0, 'white'), tint(new THREE.ConeGeometry(0.46, 1.2, 7).rotateZ(-0.3).translate(0.12, 3.45, 0), hat), ball(0.16, 0.36, 4.0, 0, 'white', 0),
+  ]).scale(1.15, 1.15, 1.15);
+}
+const ELFV = [[acc('green', 0.15, 0.15), 'red'], [acc('red', 0.1, 0.15), acc('green', 0.15, 0.15)], [acc('mauve', 0.25, 0.2), acc('yellow', 0.1, 0.15)], [acc('blue', 0.25, 0.2), acc('peach', 0.1, 0.15)]].map(([a, b]) => new THREE.InstancedMesh(elfGeo(a, b), DUAL, 40));
+ELFV.forEach((m) => { m.count = 0; m.frustumCulled = false; scene.add(m); });
+let elfN = 0;
+const newElf = () => { const m = ELFV[elfN++ % ELFV.length]; return { m, i: m.count++ }; };
+const CARRY = new THREE.InstancedMesh(tint(new THREE.BoxGeometry(1.1, 1.0, 1.1), D(new THREE.Color(1, 1, 1), new THREE.Color(0.8, 0.8, 0.9))), DUAL, 80);
+CARRY.frustumCulled = false; scene.add(CARRY);
+{ const c = new THREE.Color(); for (let i = 0; i < 80; i++) CARRY.setColorAt(i, c.copy(pick(ACCENTS)[0])); }
+let carryN = 0;
+const EM = new THREE.Matrix4(), EQ = new THREE.Quaternion(), EE = new THREE.Euler(), EV = new THREE.Vector3(), ES = new THREE.Vector3();
+const HIDE = new THREE.Matrix4().compose(new THREE.Vector3(0, -100, 0), new THREE.Quaternion(), new THREE.Vector3(0.001, 0.001, 0.001));
+function setElf(e, x, y, z, yaw, pitch = 0, roll = 0, s = 1) { e.m.setMatrixAt(e.i, EM.compose(EV.set(x, y, z), EQ.setFromEuler(EE.set(pitch, yaw, roll, 'YXZ')), ES.setScalar(s))); }
+function hideElf(e) { e.m.setMatrixAt(e.i, HIDE); }
+const ang = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+// walkers
+{
+  const spokeIn = (a, r0, pts) => {
+    for (let r = r0; r > 80; r -= 6) {
+      if (Math.abs(ang(a - Math.PI / 2)) < 0.01 && r < 112 && r > 80) { if (r > 106 || r < 86) pts.push([Math.cos(a) * r, Math.sin(a) * r]); else { const dd = 10 * Math.sin(Math.PI * (112 - r) / 32) + 3; pts.push([dd, r]); } continue; }
+      pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+    pts.push([Math.cos(a) * 80, Math.sin(a) * 80]);
+  };
+  const routeFor = (h) => {
+    const pts = [[h.door.x, h.door.z], [h.road.x, h.road.z]]; let a;
+    if (h.road.kind === 'ring') {
+      let best = null; for (const s of SPOKES) { const d = ang(s - h.road.a); if (!best || Math.abs(d) < Math.abs(best)) { best = d; a = s; } }
+      const n = Math.ceil(Math.abs(best) * 205 / 5); for (let i = 0; i <= n; i++) pts.push(ringPt(h.road.a + best * i / n));
+      spokeIn(a, RING(a) - 4, pts);
+    } else { a = h.road.a; spokeIn(a, h.road.r, pts); }
+    const d = ang(-Math.PI / 2 - a), n = Math.ceil(Math.abs(d) * 80 / 5); for (let i = 1; i <= n; i++) pts.push([Math.cos(a + d * i / n) * 80, Math.sin(a + d * i / n) * 80]);
+    pts.push([0, -88], [WS.door.x, WS.door.z]);
+    const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    return { pts, cum, len: cum[cum.length - 1] };
+  };
+  const walkers = [];
+  const homes = HOMES.slice().sort(() => rnd() - 0.5).slice(0, 52);
+  for (const h of homes) walkers.push({ e: newElf(), r: routeFor(h), sp: 2.4 + rnd() * 1.2, lat: (rnd() < 0.5 ? -1 : 1) * (1.2 + rnd() * 0.8), t0: rnd() * 400, pw: 6 + rnd() * 14, ph: 5 + rnd() * 20, carry: rnd() < 0.6 ? carryN++ : -1 });
+  const at = (r, s) => { let i = 1; while (i < r.cum.length - 1 && r.cum[i] < s) i++; const a = r.pts[i - 1], b = r.pts[i], seg = r.cum[i] - r.cum[i - 1] || 1, u = Math.min(1, Math.max(0, (s - r.cum[i - 1]) / seg)); return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, (b[0] - a[0]) / seg, (b[1] - a[1]) / seg]; };
+  animators.push((t) => {
+    for (const w of walkers) {
+      const tw = w.r.len / w.sp, T = 2 * tw + w.pw + w.ph, k = (t + w.t0) % T;
+      let s, dir, hidden = false;
+      if (k < tw) { s = k * w.sp; dir = 1; } else if (k < tw + w.pw) { hidden = true; } else if (k < 2 * tw + w.pw) { s = w.r.len - (k - tw - w.pw) * w.sp; dir = -1; } else hidden = true;
+      if (hidden) { hideElf(w.e); if (w.carry >= 0) CARRY.setMatrixAt(w.carry, HIDE); continue; }
+      const [x, z, dx, dz] = at(w.r, s), fx = dx * dir, fz = dz * dir;
+      const edge = Math.min(s, w.r.len - s), lat = w.lat * Math.min(1, edge / 6), px = x - dz * lat, pz = z + dx * lat;
+      const bob = Math.abs(Math.sin(t * 8 + w.t0)) * 0.22, y = groundAt(px, pz) + 0.2 + bob;
+      setElf(w.e, px, y, pz, Math.atan2(fx, fz), 0, Math.sin(t * 8 + w.t0) * 0.06);
+      if (w.carry >= 0) CARRY.setMatrixAt(w.carry, dir < 0 ? EM.compose(EV.set(px + fx * 0.9, y + 1.9, pz + fz * 0.9), EQ.setFromEuler(EE.set(0, Math.atan2(fx, fz), 0)), ES.setScalar(1)) : HIDE);
+    }
+  });
+}
+// skaters on the pond
+{
+  const sk = Array.from({ length: 7 }, (_, i) => ({ e: newElf(), r: 6 + rnd() * 13, w: (0.25 + rnd() * 0.2) * (i === 6 ? -1.6 : 1), a0: rnd() * 6.28, spin: i === 6 }));
+  const gy = groundAt(POND.x, POND.z) + 0.35;
+  animators.push((t) => {
+    for (const s of sk) {
+      if (s.spin) { setElf(s.e, POND.x + 2, gy, POND.z - 3, t * 6, 0, 0); continue; }      // one pirouettes in the middle
+      const a = s.a0 + t * s.w, x = POND.x + Math.cos(a) * s.r * (1 + 0.15 * Math.sin(a * 2)), z = POND.z + Math.sin(a) * s.r;
+      setElf(s.e, x, gy, z, Math.atan2(-Math.sin(a), Math.cos(a)) + 0.25 * Math.sin(t * 2.2 + s.a0), 0.15, -0.28 * Math.sign(s.w));
+    }
+  });
+}
+// sledders on the hill
+{
+  const sledGeo = merged([box(1.6, 0.3, 3.0, 0, 0.45, 0, 'red'), box(1.7, 0.6, 0.25, 0, 0.75, 1.5, 'red'), ...[-0.7, 0.7].flatMap((x) => [box(0.12, 0.12, 3.4, x, 0.05, 0.1, 'gold'), box(0.12, 0.4, 0.12, x, 0.25, -0.9, 'gold'), box(0.12, 0.4, 0.12, x, 0.25, 0.9, 'gold')])]);
+  const sl = LANES.map((ln, i) => ({ ln, e: newElf(), sled: (() => { const m = new THREE.Mesh(sledGeo, DUAL); scene.add(m); return m; })(), t0: i * 11 }));
+  const pos = (ln, u) => [ln.a[0] + (ln.b[0] - ln.a[0]) * u, ln.a[1] + (ln.b[1] - ln.a[1]) * u];
+  const tgt = new THREE.Vector3();
+  animators.push((t) => {
+    for (const s of sl) {
+      const T = 40, k = (t + s.t0) % T, slide = 6, walk = 30;
+      let u, down;
+      if (k < slide) { u = Math.pow(k / slide, 1.7); down = true; } else if (k < slide + 2) { u = 1; down = true; } else if (k < slide + 2 + walk) { u = 1 - (k - slide - 2) / walk; down = false; } else { u = 0; down = true; }
+      const [x, z] = pos(s.ln, u), [x2, z2] = pos(s.ln, Math.min(1, u + 0.02)), y = groundAt(x, z), y2 = groundAt(x2, z2);
+      const yaw = Math.atan2(x2 - x, z2 - z), pitch = -Math.atan2(y2 - y, Math.hypot(x2 - x, z2 - z));
+      if (down) {
+        s.sled.position.set(x, y + 0.2, z); s.sled.rotation.set(pitch, yaw, 0, 'YXZ');
+        setElf(s.e, x, y + 0.55, z, yaw, pitch - 0.15, 0, 0.85);
+      } else {
+        const [bx, bz] = pos(s.ln, Math.min(1, u + 0.05)), by = groundAt(bx, bz);
+        s.sled.position.set(bx, by + 0.2, bz); s.sled.rotation.set(pitch, yaw, 0, 'YXZ');
+        setElf(s.e, x, y + 0.2 + Math.abs(Math.sin(t * 6)) * 0.15, z, yaw + Math.PI, 0.15, 0);
+      }
+    }
+  });
+}
+// sellers at the market stalls, and a helper elf at the sack
+{
+  const st = SELLERS.map((p) => ({ e: newElf(), p, ph: rnd() * 6 }));
+  const helper = newElf();
+  animators.push((t) => {
+    for (const s of st) setElf(s.e, s.p.x, G0 + 0.15 + Math.max(0, Math.sin(t * 1.5 + s.ph)) * 0.25, s.p.z, s.p.ry + 0.3 * Math.sin(t * 0.4 + s.ph), 0, 0);
+    setElf(helper, WS.sack.x, WS.sack.y + 0.1 + Math.abs(Math.sin(t * 3)) * 0.4, WS.sack.z, Math.atan2(6, -7) + 0.4 * Math.sin(t * 0.6), 0, 0);
+  });
+}
+animators.push(() => { for (const m of ELFV) m.instanceMatrix.needsUpdate = true; CARRY.instanceMatrix.needsUpdate = true; });
+
+// ---------- the sleigh and its team, magic sparkling from the reindeers' hooves ----------
+{
+  const sleigh = merged([
+    box(2.8, 1.3, 4.2, 0, 1.25, 0, 'red'), box(2.8, 1.9, 1.2, 0, 2.2, -1.6, 'red'), tint(new THREE.BoxGeometry(2.8, 1.1, 0.35).rotateX(0.55).translate(0, 2.05, 2.15), 'red'),
+    box(2.95, 0.22, 4.3, 0, 1.95, 0, 'gold'), box(2.95, 0.22, 1.3, 0, 3.2, -1.6, 'gold'),
+    ...[-1.15, 1.15].flatMap((sx) => [box(0.18, 0.18, 5.6, sx, 0.1, 0.3, 'gold'), tint(new THREE.BoxGeometry(0.18, 0.18, 1.0).rotateX(-0.9).translate(sx, 0.45, 3.25), 'gold'), box(0.15, 0.6, 0.15, sx, 0.45, -1.3, 'gold'), box(0.15, 0.6, 0.15, sx, 0.45, 1.3, 'gold')]),
+    cyl(0.75, 0.95, 1.7, 8, 0, 2.75, -0.4, 'red'), box(1.95, 0.3, 1.95, 0, 2.5, -0.4, 'dark'),
+    ball(0.55, 0, 3.95, -0.3, 'skin'), tint(new THREE.ConeGeometry(0.55, 1.0, 8).rotateX(Math.PI).translate(0, 3.45, 0.05), 'white'),
+    tint(new THREE.ConeGeometry(0.58, 1.1, 8).rotateX(-0.4).translate(0, 4.6, -0.45), 'red'), ball(0.22, 0, 5.05, -0.75, 'white', 0),
+    tint(new THREE.IcosahedronGeometry(1.0, 1).scale(1, 1.15, 1).translate(0, 3.1, -1.85), 'sack'),
+    box(0.7, 0.7, 0.7, 0.6, 4.0, -1.9, acc('green')), box(0.6, 0.6, 0.6, -0.6, 4.1, -1.7, acc('blue')),
+  ]);
+  const group = new THREE.Group(); group.add(new THREE.Mesh(sleigh, DUAL));
+  const deer = [];
+  [[-0.9, 6], [0.9, 6], [-0.9, 9.4], [0.9, 9.4], [-0.9, 12.8], [0.9, 12.8], [-0.9, 16.2], [0.9, 16.2], [0, 19.6]].forEach(([x, z]) => { const m = new THREE.Mesh(DEER, DUAL); m.position.set(x, 0, z); group.add(m); deer.push(m); });
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), glowMat(P.red, 1.0, 2.2)); nose.position.set(0, 3.5, 19.6 + 2.45); group.add(nose);
+  const noseHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, color: P.red, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  noseHalo.scale.set(3.5, 3.5, 1); noseHalo.position.copy(nose.position); group.add(noseHalo);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 4), W.winMatDim); lamp.position.set(1.5, 3.4, 2.1); group.add(lamp);
+  const reins = []; for (const s of [-1, 1]) reins.push(new THREE.Vector3(s * 0.6, 2.6, 2.2), new THREE.Vector3(s * 0.9, 2.9, 19.4));
+  group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(reins), new THREE.LineBasicMaterial({ color: pal.gold[0] })));
+  group.scale.setScalar(2.2); scene.add(group);
+  const at = (t, v) => { const a = t * 0.05, r = 255 + 70 * Math.sin(2 * a + 1); return v.set(Math.cos(a) * r, 108 + 28 * Math.sin(3 * a + 0.5), Math.sin(a) * r); };
+  const p0 = new THREE.Vector3(), p1 = new THREE.Vector3(), hv = new THREE.Vector3();
+  let acc_ = 0;
+  animators.push((t, night, dt) => {
+    at(t, p0); at(t + 0.5, p1); group.position.copy(p0); group.lookAt(p1);
+    deer.forEach((m, i) => { const g = t * 7 + i * 0.9; m.position.y = 0.35 * Math.sin(g); m.rotation.x = 0.1 * Math.sin(g + 1); });
+    group.updateMatrixWorld(true);
+    noseHalo.material.opacity = 0.08 + 0.4 * night * (0.75 + 0.25 * Math.sin(t * 3));
+    acc_ += dt * 70;
+    while (acc_ > 1) { acc_ -= 1; const m = deer[(Math.random() * deer.length) | 0]; hv.copy(HOOVES[(Math.random() * 4) | 0]); m.localToWorld(hv); SPK.emit(hv, 1.2, 2.2); }
+  });
+}
+
+// ---------- pines on the hills, icebergs locked in the sea ice, polar bears ----------
+{
+  const geo = merged([cone(0.38, 0.5, 7, 0, 0.35, 0, 'pine'), cone(0.2, 0.18, 7, 0, 0.52, 0, 'snow'), cone(0.28, 0.42, 7, 0, 0.62, 0, 'pine'), cone(0.15, 0.15, 7, 0, 0.78, 0, 'snow'), cone(0.16, 0.3, 7, 0, 0.88, 0, 'snow'), cyl(0.05, 0.06, 0.15, 5, 0, 0.07, 0, 'woodDark')]);
+  const MAX = 7000, mesh = new THREE.InstancedMesh(geo, DUAL, MAX);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), e = new THREE.Euler(), c = new THREE.Color();
+  let n = 0;
+  for (let i = 0; i < 90000 && n < MAX; i++) {
+    const x = (rnd() - 0.5) * 2000, z = (rnd() - 0.5) * 2000, h = height(x, z), r = Math.hypot(x, z);
+    if (h < 3 || r < 120 || W.slopeAt(x, z, 3) > 0.7) continue;
+    if (fbm(x * 0.006 + 9, z * 0.006, 3) < (r < 235 ? 0.28 : -0.1)) continue;
+    if (roadDist(x, z) < 8 || keepClear.some((k) => Math.hypot(k.x - x, k.z - z) < k.r)) continue;
+    const ht = (r < 235 ? 8 : 10) + rnd() * 13; s.set(ht, ht, ht);
+    m.compose(v.set(x, h - 1, z), q.setFromEuler(e.set(0, rnd() * 6.28, 0)), s); mesh.setMatrixAt(n, m);
+    mesh.setColorAt(n, c.setScalar(0.85 + rnd() * 0.15)); n++;
+  }
+  mesh.count = n; scene.add(mesh);
+  for (let i = 0, k = 0; i < 3000 && k < 30; i++) {
+    const a = rnd() * 6.28, r = 820 + rnd() * 600, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (height(x, z) > -10) continue;
+    const sx = 10 + rnd() * 25;
+    S.push(tint(new THREE.IcosahedronGeometry(1, 0).scale(sx, 4 + rnd() * 12, sx * (0.6 + rnd() * 0.6)).rotateY(rnd() * 6.28).translate(x, 0, z), 'ice')); k++;
+  }
+  // a polar bear and her cub ambling along the shore ice
+  const bearGeo = merged([box(2.2, 1.8, 3.8, 0, 2.1, 0, 'bear'), box(1.6, 1.4, 1.6, 0, 2.4, 2.4, 'bear'), box(1.0, 0.9, 1.3, 0, 2.3, 3.6, 'bear'), box(0.4, 0.35, 0.3, 0, 2.35, 4.3, 'dark'),
+    box(0.35, 0.35, 0.2, -0.4, 2.95, 3.2, 'bear'), box(0.35, 0.35, 0.2, 0.4, 2.95, 3.2, 'bear'), ...[[-0.65, -1.2], [0.65, -1.2], [-0.65, 1.2], [0.65, 1.2]].map(([x, z]) => box(0.6, 1.4, 0.7, x, 0.7, z, 'bear'))]);
+  const bears = [1, 0.55].map((s) => { const b = new THREE.Mesh(bearGeo, DUAL); b.scale.setScalar(s * 2.2); scene.add(b); return b; });
+  animators.push((t) => {
+    bears.forEach((b, i) => {
+      const a = 0.35 + t * 0.0016 - i * 0.012, r = 880 + 25 * Math.sin(t * 0.01) + i * 6;
+      b.position.set(Math.cos(a) * r, 0.1 + Math.abs(Math.sin(t * 1.6 + i)) * 0.3, Math.sin(a) * r); b.rotation.set(0, Math.atan2(-Math.sin(a), Math.cos(a)) + Math.PI, Math.sin(t * 1.6 + i) * 0.04);
+    });
+  });
+}
+
+// ---------- aurora curtains ----------
+const auroraMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  uniforms: { time: { value: 0 }, strength: { value: 0 }, cLow: { value: mix(P.teal, P.green, 0.35) }, cHigh: { value: mix(P.mauve, P.pink, 0.4) } },
+  vertexShader: `uniform float time; attribute float seed; varying vec2 vUv; varying float vSeed;
+    void main(){ vUv = uv; vSeed = seed; vec3 p = position;
+      p.z += sin(p.x * 0.0022 + time * 0.05 + seed) * 220.0 + sin(p.x * 0.0061 - time * 0.09 + seed * 2.0) * 90.0;
+      p.y += sin(p.x * 0.003 + time * 0.07 + seed) * 60.0 * uv.y;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
+  fragmentShader: `uniform float time, strength; uniform vec3 cLow, cHigh; varying vec2 vUv; varying float vSeed;
+    float h11(float n){ return fract(sin(n) * 43758.5453); }
+    float vnoise(float x){ float i = floor(x), f = fract(x); return mix(h11(i), h11(i + 1.0), f * f * (3.0 - 2.0 * f)); }
+    void main(){
+      float x = vUv.x * 60.0 + vSeed * 10.0;
+      float rays = 0.45 + 0.55 * vnoise(x * 2.3 + time * 0.25) * vnoise(x * 0.7 - time * 0.12 + 5.0);
+      float bottom = smoothstep(0.0, 0.08, vUv.y), topFade = 1.0 - smoothstep(0.35, 1.0, vUv.y);
+      float ends = smoothstep(0.0, 0.15, vUv.x) * smoothstep(1.0, 0.85, vUv.x);
+      float pulse = 0.7 + 0.3 * sin(time * 0.15 + vSeed * 3.0 + vUv.x * 4.0);
+      vec3 col = mix(cLow, cHigh, smoothstep(0.15, 0.85, vUv.y));
+      float a = rays * bottom * topFade * ends * pulse * strength;
+      gl_FragColor = vec4(col * a * 1.1, 1.0);
+    }`,
+});
+{
+  for (let i = 0; i < 7; i++) {
+    const g = new THREE.PlaneGeometry(4600, 1300, 160, 8);
+    g.setAttribute('seed', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(i * 1.7 + 0.3), 1));
+    const m = new THREE.Mesh(g, auroraMat), a = i / 7 * Math.PI * 2 + 0.3, d = 4300 + (i % 3) * 300;
+    m.position.set(Math.cos(a) * d, 850 + (i % 3) * 140, Math.sin(a) * d); m.lookAt(0, 900, 0);
+    m.renderOrder = -1; m.frustumCulled = false; scene.add(m);
+  }
+  const lowC = mix(P.teal, P.green, 0.35), highC = mix(P.mauve, P.pink, 0.4);
+  animators.push((t, night, dt, e) => {
+    auroraMat.uniforms.time.value = t; auroraMat.uniforms.strength.value = cur.aurora;
+    const shift = 0.5 + 0.5 * Math.sin(t * 0.03), pulse = 0.85 + 0.15 * Math.sin(t * 0.15) * Math.sin(t * 0.07 + 1);
+    W.moonLight.color.copy(lowC).lerp(highC, shift * 0.6);
+    W.moonLight.intensity = 1.1 * cur.aurora * pulse * smooth(0.02, -0.2, e);
+    W.moonLight.position.set(Math.cos(t * 0.004) * 600, 500, Math.sin(t * 0.004) * 600);
+  });
+}
+
+// ---------- mist over the sea ice, clouds on the far ranges, snowfall ----------
+for (let i = 0, k = 0; i < 4000 && k < 50; i++) {
+  const a = rnd() * 6.28, r = 700 + rnd() * 700, x = Math.cos(a) * r, z = Math.sin(a) * r;
+  if (height(x, z) > 0) continue;
+  W.drifter('mist', 0.1 + rnd() * 0.08, 240 + rnd() * 200, 40 + rnd() * 25, x, 10 + rnd() * 14, z, 0.004 + rnd() * 0.004, 0.95 + rnd() * 0.1); k++;
+}
+for (let i = 0; i < 30; i++) {
+  const a = rnd() * 6.28, r = 1500 + rnd() * 600;
+  W.drifter('cloud', 0.16 + rnd() * 0.14, 420 + rnd() * 300, 90 + rnd() * 50, Math.cos(a) * r, 520 + rnd() * 220, Math.sin(a) * r, 0.004 + rnd() * 0.004, 0.9 + rnd() * 0.15);
+}
+W.particles({ count: 1100, size: 1.3, color: L.base, box: 260, fall: 7, sway: 2, dayScale: 1, nightScale: 0.5 });
+
+// ---------- softer windows and the Latte-to-Mocha switch (runs after the kit's own light update) ----------
+{
+  const winDay = mix(L.s1, L.sapph, 0.25), winNight = mix(P.yellow, P.peach, 0.25).multiplyScalar(1.02), dimDay = mix(L.s1, L.lav, 0.2), dimNight = mix(P.peach, P.maroon, 0.2).multiplyScalar(0.8);
+  const gDay = mix(L.base, L.rose, 0.15), gNight = mix(P.s0, P.s1, 0.5);
+  animators.push((t, night) => {
+    NM.value = smooth(0.12, 0.85, night);
+    W.hemi.groundColor.copy(gDay).lerp(gNight, night);                        // snow bounces light up onto the walls by day
+    W.winMat.color.copy(winDay).lerp(winNight, night); W.winMatDim.color.copy(dimDay).lerp(dimNight, night);
+  });
+}
+
+finishBulbs();
+scene.add(new THREE.Mesh(mergeGeometries(S), DUAL));
+scene.add(new THREE.Mesh(mergeGeometries(RD), ROADMAT));
+W.finish();
+</script>
+</body></html>
