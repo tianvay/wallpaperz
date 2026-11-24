@@ -60,7 +60,7 @@ export function makeRng(seed) {
 
 // ---------- the world ----------
 // cfg: { seed, height(x,z), keys[], terrain:{size,seg,color(x,y,z,up,c)->glow}, water:{radius, ice}|null,
-//        path(t)->[x,z], center:Vector3, clearance, hover:[base,amp], lookAhead, centerPull, fogNear,
+//        path(t)->[x,z], center:Vector3, clearance, hover:[base,amp] or ()=>[base,amp], lookAhead, centerPull, fogNear,
 //        bloom:{threshold, day, night}, houseTones:{walls[], roofs[]} }
 export function createWorld(cfg) {
   const Q = new URLSearchParams(location.search);
@@ -492,10 +492,11 @@ export function createWorld(cfg) {
       composer.addPass(finalPass);
     }
 
-    const center = cfg.center ?? new THREE.Vector3(0, 300, 0), [hoverBase, hoverAmp] = cfg.hover ?? [75, 60];
-    const lookAhead = cfg.lookAhead ?? 40, centerPull = cfg.centerPull ?? 0.3, lookDrop = cfg.lookDrop ?? 45;
+    // hover ([base, amp]) and lookDrop may be functions, read every frame (e.g. to fly lower at night)
+    const center = cfg.center ?? new THREE.Vector3(0, 300, 0), live = (v, d) => (typeof v === 'function' ? v() : v ?? d);
+    const lookAhead = cfg.lookAhead ?? 40, centerPull = cfg.centerPull ?? 0.3;
     const path = (t) => cfg.path(t * SPEED);
-    const targetY = (t) => { let g = cfg.water ? (cfg.water.level ?? 0) : -1e9; for (let k = 0; k <= 8; k++) { const [x, z] = path(t + k * 5 / SPEED); g = Math.max(g, height(x, z)); } return g + hoverBase + hoverAmp * (0.5 + 0.5 * Math.sin(t * 0.017 * SPEED)); };
+    const targetY = (t) => { let g = cfg.water ? (cfg.water.level ?? 0) : -1e9; for (let k = 0; k <= 8; k++) { const [x, z] = path(t + k * 5 / SPEED); g = Math.max(g, height(x, z)); } const [hoverBase, hoverAmp] = live(cfg.hover, [75, 60]); return g + hoverBase + hoverAmp * (0.5 + 0.5 * Math.sin(t * 0.017 * SPEED)); };
     let camY = null, last = performance.now(), acc = 0, prevT = null;
     const look = new THREE.Vector3(), ahead = new THREE.Vector3(), focus = new THREE.Vector3();
 
@@ -523,7 +524,7 @@ export function createWorld(cfg) {
       camY = camY === null ? ty : camY + (ty - camY) * Math.min(1, dt * 0.5);
       camera.position.set(x, camY, z);
       const [ax, az] = path(t + lookAhead / SPEED);
-      ahead.set(ax, camY - lookDrop, az);
+      ahead.set(ax, camY - live(cfg.lookDrop, 45), az);
       look.copy(ahead).lerp(center, centerPull);
       const ca = Math.atan2(z, x); let wsum = 0, pull = 0; focus.set(0, 0, 0);
       for (const sg of SIGHTS) {

@@ -1,0 +1,828 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hollow Manor (3D)</title>
+<style>html,body{margin:0;height:100%;background:#11111b;overflow:hidden}canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}</style>
+<script type="importmap">{ "imports": { "three": "./lib/three.module.min.js" } }</script>
+<!-- lib/ holds three.js r170 (MIT) and addons; kit3d.js is the shared engine (master copy in tools/kit3d) -->
+</head><body>
+<script type="module">
+// Hollow Manor: a crooked Victorian house with a turret on a large estate behind a wrought-iron fence. A gravel drive
+// with a dry fountain, gnarled leafless trees, a pumpkin patch with a scarecrow, a murky pond, and the family crypt
+// with its little graveyard on a hill. By day the estate lies in grey fog (muted Catppuccin Latte); by night a
+// thunderstorm rolls in (Catppuccin Mocha): rain, lightning, bats round the turret, a ghost by the crypt, and the
+// jack-o'-lantern by the front steps flickering orange. URL options: see kit3d.js.
+import { createWorld, THREE, mergeGeometries, P, L, mix, smooth, fbm, ridged, makeRng } from './kit3d.js';
+
+const sq = (v) => v * v;
+const MANOR = { x: 0, z: -10 }, CRYPT = { x: 130, z: -110 }, POND = { x: -130, z: 95 }, FOUNT = { x: 0, z: 88 };
+const FENCE = { x0: -215, x1: 215, z0: -205, z1: 240 }, GATE_W = 14;
+// the house stands on a raised terrace: level at PLAT_H, grassy slopes to the sides and back, and a stone retaining
+// wall at the front between z = TER_Z and TER_Z + 10 (exactly one terrain cell, so the wall block hides the drop)
+const PLAT = { x0: -74, x1: 50, z0: -54 }, PLAT_H = 17, TER_Z = 30;
+function plateau(x, z) {
+  const dx = Math.max(PLAT.x0 - x, x - PLAT.x1, 0), dzb = Math.max(PLAT.z0 - z, 0);
+  const front = x > PLAT.x0 - 2 && x < PLAT.x1 + 2 ? smooth(10, 0, z - TER_Z) : smooth(26, 0, z - TER_Z);
+  return smooth(30, 0, Math.hypot(dx, dzb)) * front;
+}
+function height(x, z) {
+  const r = Math.hypot(x, z);
+  let h = 8 + 5 * fbm(x * 0.005, z * 0.005, 3);
+  h += 45 * smooth(320, 720, r) * (0.4 + 0.6 * (fbm(x * 0.004 + 5, z * 0.004, 4) * 0.5 + 0.5));
+  const lv = smooth(60, 30, Math.hypot(x, z - TER_Z - 22)); h = h * (1 - lv) + 9 * lv;              // level forecourt below the stairs
+  const f = plateau(x, z); h = h * (1 - f) + PLAT_H * f;
+  h += 26 * Math.exp(-(sq(x - CRYPT.x) + sq(z - CRYPT.z)) / sq(55));                                 // the crypt hill
+  h -= 16 * Math.exp(-(sq(x - POND.x) + sq(z - POND.z)) / sq(40));                                   // the pond
+  h += 1.5 * fbm(x * 0.06, z * 0.06, 2);
+  h += 260 * smooth(1400, 2000, r) * (0.3 + 0.9 * ridged(x * 0.003 + 2, z * 0.003, 4));
+  return h;
+}
+
+// ---------- sky: grey fog by day, storm by night ----------
+const NIGHT = { top: mix(P.crust, P.mantle, 0.5), mid: mix(P.base, P.s0, 0.35), hor: mix(P.s0, P.s1, 0.35).lerp(P.mauve, 0.04), glow: P.s1, disc: P.lav,
+  light: P.lav, lightI: 0, hemi: mix(P.lav, P.blue, 0.4), hemiI: 0.55, cloud: mix(P.s0, P.s1, 0.35), mist: mix(P.s1, P.o0, 0.3),
+  water: mix(P.crust, P.s0, 0.5), fogD: 0.0012, stars: 0.12, win: 1, snow: 0, storm: 1, gfog: 0 };
+const DAY = { top: mix(L.s1, L.base, 0.25), mid: mix(L.s0, L.base, 0.35), hor: mix(L.s0, L.base, 0.55), glow: mix(L.s0, L.base, 0.6), disc: mix(L.s0, L.base, 0.5),
+  light: mix(L.s0, L.base, 0.6), lightI: 0.55, hemi: mix(L.s0, L.lav, 0.1), hemiI: 1.55, cloud: mix(L.s1, L.s0, 0.5), mist: mix(L.s0, L.base, 0.5),
+  water: mix(L.o0, L.s1, 0.5), fogD: 0.0019, stars: 0, win: 0.1, snow: 0, storm: 0, gfog: 1 };
+const KEYS = [
+  { e: -1, ...NIGHT }, { e: -0.25, ...NIGHT },
+  { e: -0.06, top: mix(P.base, P.s0, 0.5), mid: mix(P.s0, P.mauve, 0.12), hor: mix(P.s1, P.maroon, 0.18), glow: mix(P.maroon, P.peach, 0.3), disc: P.peach,
+    light: P.maroon, lightI: 0, hemi: mix(P.lav, P.maroon, 0.3), hemiI: 0.8, cloud: mix(P.s1, P.mauve, 0.15), mist: mix(P.o0, P.mauve, 0.15),
+    water: mix(P.s0, P.s1, 0.5), fogD: 0.0016, stars: 0.05, win: 0.85, snow: 0, storm: 0.45, gfog: 0.3 },
+  { e: 0.08, ...DAY, fogD: 0.0022, win: 0.4, storm: 0, gfog: 1 }, { e: 1, ...DAY },
+];
+
+// ---------- colour pairs: [muted Latte by day, Mocha by night] ----------
+const D = (d, n) => [d, n];
+const pal = {
+  grass: D(mix(L.o0, L.green, 0.14), mix(P.s2, P.green, 0.18)), grass2: D(mix(L.o1, L.yellow, 0.12), mix(P.o0, P.yellow, 0.1)),
+  mud: D(mix(L.o1, L.rose, 0.2), mix(P.s1, P.rose, 0.12)), rock: D(mix(L.s2, L.o1, 0.5), mix(P.s2, P.o0, 0.4)),
+  gravel: D(mix(L.s1, L.rose, 0.12), mix(P.o0, P.rose, 0.1)),
+  stone: D(mix(L.s1, L.base, 0.25), mix(P.o1, P.lav, 0.12)), stoneDark: D(mix(L.o0, L.s1, 0.4), mix(P.s2, P.o0, 0.3)), moss: D(mix(L.o0, L.green, 0.3), mix(P.s2, P.green, 0.3)),
+  wall: D(mix(L.o0, L.lav, 0.12), mix(P.s2, P.mauve, 0.22)), wall2: D(mix(L.o1, L.maroon, 0.1), mix(P.s2, P.maroon, 0.2)),
+  trim: D(mix(L.s0, L.base, 0.3), mix(P.o1, P.text, 0.15)), roof: D(mix(L.sub0, L.text, 0.45), mix(P.s0, P.base, 0.3)),
+  wood: D(mix(L.o2, L.rose, 0.25), mix(P.s2, P.flam, 0.18)), woodDark: D(mix(L.sub0, L.text, 0.3), mix(P.s1, P.base, 0.3)),
+  iron: D(mix(L.text, L.base, 0.1), mix(P.s0, P.crust, 0.3)), bark: D(mix(L.o2, L.text, 0.45), mix(P.s1, P.base, 0.3)), bark2: D(mix(L.o1, L.text, 0.3), mix(P.s1, P.s0, 0.4)),
+  pumpkin: D(mix(L.peach, L.o1, 0.15), mix(P.peach, P.s1, 0.35)), stem: D(mix(L.green, L.text, 0.45), mix(P.green, P.s0, 0.5)),
+  straw: D(mix(L.yellow, L.o1, 0.4), mix(P.yellow, P.s1, 0.55)), cloth: D(mix(L.maroon, L.o1, 0.45), mix(P.maroon, P.s0, 0.5)), cloth2: D(mix(L.blue, L.o1, 0.55), mix(P.blue, P.s0, 0.55)),
+  darkWin: D(mix(L.text, L.o1, 0.3), mix(P.crust, P.s0, 0.4)), fountainW: D(mix(L.o1, L.teal, 0.15), mix(P.s0, P.teal, 0.12)),
+};
+function terrainColor(x, y, z, up, c, n) {
+  c.copy(pal.grass[n]).lerp(pal.grass2[n], 0.5 + 0.5 * fbm(x * 0.02, z * 0.02, 2));
+  const inside = x > FENCE.x0 && x < FENCE.x1 && z > FENCE.z0 && z < FENCE.z1;
+  if (!inside) c.lerp(pal.mud[n], 0.25);
+  if (y < 1.5) c.lerp(pal.mud[n], smooth(1.5, -1, y));
+  const steep = smooth(0.85, 0.6, up); c.lerp(pal.rock[n], steep);
+  return 0;
+}
+
+const W = createWorld({
+  seed: 31102026, height, keys: KEYS, tod: 0.8, sunAz: 2.2,
+  terrain: { size: 4400, seg: 440, color: (x, y, z, up, c) => terrainColor(x, y, z, up, c, 0) },
+  water: { radius: 2000 },
+  // low among the trees (branches sweep past the lens now and then); swings wide round the crypt so it never clips it
+  path: (t) => {
+    const a = t * 0.016, dc = Math.atan2(Math.sin(a + 0.785), Math.cos(a + 0.785));
+    const r = 195 + 45 * Math.sin(t * 0.0083) + 75 * Math.exp(-dc * dc / 0.12);
+    return [Math.cos(a) * r, 20 + Math.sin(a) * r];
+  },
+  // by day the camera glides above the ground fog, looking down onto it; in the night's rain it drops among the trees
+  center: new THREE.Vector3(MANOR.x + 10, 26, MANOR.z), centerPull: 0.5, lookAhead: 26,
+  hover: () => { const k = smooth(0.15, 0.85, W.cur.storm); return [30 - 19 * k, 12 - 4 * k]; },
+  lookDrop: () => 20 - 16 * smooth(0.15, 0.85, W.cur.storm),
+  bloom: { threshold: 0.92, day: 0.1, night: 0.45 },
+  groundLight: mix(P.s0, P.s1, 0.5), moonI: 0.45, noMoon: true, fov: 52,
+});
+const { rnd, scene, GLOW, DIM, place, plain, toWorld, groundAt, addLight, glowMat, keepClear, SIGHTS, animators, smokeSources, cur } = W;
+const pick = (a) => a[(rnd() * a.length) | 0];
+const UP = new THREE.Vector3(0, 1, 0);
+
+// ---------- day/night material (same scheme as North Pole Workshop) ----------
+const NM = { value: 0 };
+function dualPatch(sh) {
+  sh.uniforms.nightMix = NM;
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 color2; uniform float nightMix;')
+    .replace('#include <color_vertex>', `vColor = vec3(1.0); vColor *= mix(color, color2, nightMix);
+      #ifdef USE_INSTANCING_COLOR
+        vColor.xyz *= instanceColor.xyz;
+      #endif`);
+}
+const dualMat = (o = {}) => { const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...o }); m.onBeforeCompile = (sh) => dualPatch(sh); return m; };
+const DUAL = dualMat(), ROADMAT = dualMat({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide });
+{
+  const terr = scene.children.find((o) => o.isMesh && o.geometry.attributes.glow), g = terr.geometry, p = g.attributes.position, n = g.attributes.normal;
+  const c2 = new Float32Array(p.count * 3), c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) { terrainColor(p.getX(i), p.getY(i), p.getZ(i), n.getY(i), c, 1); c2.set([c.r, c.g, c.b], i * 3); }
+  g.setAttribute('color2', new THREE.BufferAttribute(c2, 3));
+  const prev = terr.material.onBeforeCompile; terr.material.onBeforeCompile = (sh, r) => { prev(sh, r); dualPatch(sh); };
+}
+const S = [], RD = [];
+function tint(g, k) {
+  const [d, n] = typeof k === 'string' ? pal[k] : k;
+  g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); if (!g.attributes.normal) g.computeVertexNormals();
+  const cnt = g.attributes.position.count, a = new Float32Array(cnt * 3), b = new Float32Array(cnt * 3);
+  for (let i = 0; i < cnt; i++) { a.set([d.r, d.g, d.b], i * 3); b.set([n.r, n.g, n.b], i * 3); }
+  g.setAttribute('color', new THREE.BufferAttribute(a, 3)); g.setAttribute('color2', new THREE.BufferAttribute(b, 3)); return g;
+}
+const box = (w, h, d, x, y, z, k) => tint(new THREE.BoxGeometry(w, h, d).translate(x, y, z), k);
+const cyl = (r1, r2, h, seg, x, y, z, k) => tint(new THREE.CylinderGeometry(r1, r2, h, seg).translate(x, y, z), k);
+const cone = (r, h, seg, x, y, z, k) => tint(new THREE.ConeGeometry(r, h, seg).translate(x, y, z), k);
+const ball = (r, x, y, z, k, det = 1) => tint(new THREE.IcosahedronGeometry(r, det).translate(x, y, z), k);
+function ribbon(pts, width, k, lift = 0.15) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) { const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2.5)); for (let j = 0; j < n; j++) out.push([ax + (bx - ax) * j / n, az + (bz - az) * j / n]); }
+  out.push(pts[pts.length - 1]);
+  const A = [], B = [];
+  for (let i = 0; i < out.length; i++) {
+    const a = out[Math.max(0, i - 1)], b = out[Math.min(out.length - 1, i + 1)];
+    let dx = b[0] - a[0], dz = b[1] - a[1]; const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
+    const nx = -dz * width / 2, nz = dx * width / 2, [x, z] = out[i];
+    A.push(new THREE.Vector3(x + nx, groundAt(x + nx, z + nz) + lift, z + nz)); B.push(new THREE.Vector3(x - nx, groundAt(x - nx, z - nz) + lift, z - nz));
+  }
+  const pos = []; for (let i = 0; i < out.length - 1; i++) pos.push(A[i], B[i], A[i + 1], B[i], B[i + 1], A[i + 1]);
+  RD.push(tint(new THREE.BufferGeometry().setFromPoints(pos), k));
+}
+const flick = (t, s) => 0.72 + 0.14 * Math.sin(t * 9.1 + s) + 0.09 * Math.sin(t * 23.7 + s * 2) + 0.05 * Math.sin(t * 47 + s * 3);
+function halo(color, size, x, y, z, dayO, nightO, flickS = null) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sp.scale.set(size, size, 1); sp.position.set(x, y, z); scene.add(sp);
+  animators.push((t, night) => { sp.material.opacity = (dayO + (nightO - dayO) * night) * (flickS === null ? 1 : flick(t, flickS)); });
+  return sp;
+}
+
+const STAIR_PUMPKINS = [];
+// ---------- the terrace: retaining wall with balustrade, grand stairs, gravel forecourt; the drive and paths ----------
+const STAIR_W = 18, WALL_FRONT = TER_Z + 10;
+{
+  const y0 = PLAT_H, gap = STAIR_W / 2 + 2;
+  for (const [a, b] of [[PLAT.x0, -gap], [gap, PLAT.x1]]) {
+    const len = b - a, cx = (a + b) / 2;
+    S.push(box(len, y0 + 0.4 - 4, 10, cx, (y0 + 0.4 + 4) / 2, TER_Z + 5, 'stone'));
+    S.push(box(len + 0.4, 0.6, 10.6, cx, y0 + 0.6, TER_Z + 5, 'stoneDark'));
+    for (let y = 6; y < y0 - 0.5; y += 2.2) S.push(box(len, 0.18, 0.2, cx, y, WALL_FRONT + 0.05, 'stoneDark'));      // rusticated courses
+    // balustrade along the front edge (a few balusters have fallen out)
+    for (let x = a + 0.8; x < b - 0.5; x += 1.15) { if (rnd() < 0.06) continue; S.push(cyl(0.22, 0.32, 1.7, 6, x, y0 + 1.75, WALL_FRONT - 0.6, 'trim'), ball(0.3, x, y0 + 2.2, WALL_FRONT - 0.6, 'trim', 0)); }
+    S.push(box(len, 0.45, 0.9, cx, y0 + 2.9, WALL_FRONT - 0.6, 'stone'));
+    for (let x = a; x <= b + 0.1; x += len / Math.max(1, Math.round(len / 13))) {
+      S.push(box(1.6, 3.2, 1.6, x, y0 + 2.2, WALL_FRONT - 0.6, 'stone'), box(1.9, 0.4, 1.9, x, y0 + 3.9, WALL_FRONT - 0.6, 'stoneDark'));
+      S.push(cyl(0.35, 0.55, 0.6, 8, x, y0 + 4.4, WALL_FRONT - 0.6, 'stoneDark'), tint(new THREE.SphereGeometry(0.75, 8, 6).scale(1, 0.8, 1).translate(x, y0 + 5.1, WALL_FRONT - 0.6), 'stone'));
+    }
+  }
+  // grand stairs: stacked blocks, cheek walls, pillars top and bottom
+  for (let i = 0; i < 10; i++) { const top = y0 - (i + 1) * 0.8, dep = i + 1; S.push(box(STAIR_W, top - 4, dep, 0, (top + 4) / 2, TER_Z + dep / 2, 'stone')); S.push(box(STAIR_W, 0.12, 0.25, 0, top + 0.02, TER_Z + dep - 0.15, 'stoneDark')); }
+  for (const s of [-1, 1]) {
+    const x = s * (STAIR_W / 2 + 1);
+    S.push(tint(new THREE.BoxGeometry(2, 1.6, 13.2).rotateX(Math.atan2(8, 10)).translate(x, y0 - 3.4, TER_Z + 5), 'stone'));
+    for (const [z, y, h] of [[TER_Z + 0.2, y0, 4.2], [WALL_FRONT + 0.4, groundAt(x, WALL_FRONT + 1) - 0.3, 4.2]]) {
+      S.push(box(2.6, h, 2.6, x, y + h / 2, z, 'stone'), box(3, 0.5, 3, x, y + h + 0.25, z, 'stoneDark'));
+      if (z < TER_Z + 1) { S.push(cyl(0.18, 0.25, 3.5, 6, x, y + h + 2.2, z, 'iron'), box(1.2, 0.2, 1.2, x, y + h + 4, z, 'iron'), cone(0.9, 0.9, 4, x, y + h + 5.6, z, 'iron')); DIM.push(plain(new THREE.BoxGeometry(0.8, 1.2, 0.8).translate(x, y + h + 4.7, z))); }
+      else STAIR_PUMPKINS.push([x, y + h + 0.5, z]);
+    }
+  }
+  // gravel forecourt in front of the house, and the walk round it
+  RD.push(tint(new THREE.PlaneGeometry(56, TER_Z - 4).rotateX(-Math.PI / 2).translate(0, y0 + 0.12, (TER_Z + 4) / 2), 'gravel'));
+  for (let i = 0; i < 6; i++) { const x = (i < 3 ? -1 : 1) * (14 + (i % 3) * 7), z = 26; S.push(box(4, 0.5, 2.4, x, y0 + 0.25, z, 'moss'), cone(1.0, 2.6, 6, x, y0 + 1.8, z, 'moss')); }   // clipped box hedges, gone ragged
+}
+ribbon([[0, FENCE.z1 + 40], [0, FOUNT.z + 28]], 9, 'gravel');
+{ const ring = []; for (let i = 0; i <= 80; i++) { const a = i / 80 * Math.PI * 2; ring.push([FOUNT.x + Math.cos(a) * 25, FOUNT.z + Math.sin(a) * 25]); } ribbon(ring, 8, 'gravel'); }
+ribbon([[0, FOUNT.z - 28], [0, WALL_FRONT + 4]], 9, 'gravel');
+RD.push(tint(new THREE.CircleGeometry(15, 40, 0, Math.PI).rotateX(-Math.PI / 2).rotateY(Math.PI).translate(0, groundAt(0, WALL_FRONT + 2) + 0.12, WALL_FRONT + 0.5), 'gravel'));
+const CRYPT_PATH = [[30, 0], [52, -6], [76, -36], [96, -68], [112, -92], [CRYPT.x - 6, CRYPT.z + 12]];
+ribbon(CRYPT_PATH, 3.4, 'gravel', 0.2);
+keepClear.push({ x: MANOR.x, z: MANOR.z, r: 66 }, { x: FOUNT.x, z: FOUNT.z, r: 32 }, { x: CRYPT.x, z: CRYPT.z, r: 22 });
+for (let x = PLAT.x0; x <= PLAT.x1; x += 10) keepClear.push({ x, z: TER_Z + 5, r: 10 });
+for (let z = WALL_FRONT; z < FENCE.z1 + 40; z += 8) keepClear.push({ x: 0, z, r: 8 });
+for (const [x, z] of CRYPT_PATH) keepClear.push({ x, z, r: 6 });
+
+// ---------- living windows: lights go out and come back, shadows pass behind the curtains ----------
+const WINS = [], WIN_NIGHT = { value: 0 };
+const WIN_COL = { glassD: { value: mix(L.o1, L.sapph, 0.18) }, glassN: { value: mix(P.crust, P.s0, 0.45) }, frameD: { value: mix(L.text, L.o2, 0.3) }, frameN: { value: P.crust.clone() } };
+function winMaterial(color, asp, arch) {
+  return new THREE.ShaderMaterial({
+    fog: true,
+    uniforms: { col: { value: color.clone() }, I: { value: 1 }, lit: { value: 1 }, sx: { value: -1 }, sOn: { value: 0 }, asp: { value: asp }, arch: { value: arch ? 1 : 0 }, night: WIN_NIGHT, ...WIN_COL, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+    vertexShader: `varying vec2 vUv;
+      #include <common>
+      #include <fog_pars_vertex>
+      void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `uniform vec3 col, glassD, glassN, frameD, frameN; uniform float I, lit, night, sx, sOn, asp, arch; varying vec2 vUv;
+      #include <common>
+      #include <fog_pars_fragment>
+      float sdBox(vec2 p, vec2 b){ vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+      void main(){
+        vec2 uv = vUv;
+        if (arch > 0.5) { vec2 q = vec2((uv.x - 0.5) * asp, uv.y - 1.0 + 0.5 * asp); if (q.y > 0.0 && length(q) > 0.5 * asp) discard; }
+        float curtain = 0.5 + 0.5 * smoothstep(0.0, 0.32, uv.x) * smoothstep(1.0, 0.68, uv.x);
+        vec3 warm = col * I * curtain * (0.8 + 0.2 * uv.y);
+        vec2 p = vec2((uv.x - sx) * asp, uv.y);
+        float d = min(length(p - vec2(0.0, 0.66)) - 0.085, sdBox(p - vec2(0.0, 0.28), vec2(0.11, 0.26)) - 0.07);
+        warm *= 1.0 - 0.88 * (1.0 - smoothstep(-0.03, 0.06, d)) * sOn;
+        vec3 c = mix(glassD + col * 0.05 * lit, mix(glassN, warm, lit), night);
+        float bar = max(step(abs(uv.x - 0.5), 0.03), step(abs(uv.y - 0.6), 0.025));
+        float inner = step(0.05, uv.x) * step(uv.x, 0.95) * step(0.035, uv.y) * step(uv.y, 0.965);
+        c = mix(c, mix(frameD, frameN, night), max(bar, 1.0 - inner));
+        gl_FragColor = vec4(c, 1.0);
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }`,
+  });
+}
+function addWin(w, h, lx, ly, lz, lry, ox, oy, oz, ory, o = {}) {
+  const mat = winMaterial(o.color ?? pick([P.yellow, P.yellow, mix(P.yellow, P.peach, 0.5), P.peach]), w / h, o.arch);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  m.position.copy(toWorld(lx, ly, lz, ox, oy, oz, ory)); m.rotation.y = ory + lry; scene.add(m);
+  const on = rnd() < (o.pOn ?? 0.68);
+  WINS.push({ mat, on, lvl: on ? 1 : 0, next: 4 + rnd() * 150, s: rnd() * 50, sil: { x: -1, v: 0, on: 0, pause: 0, mid: 0.5 }, ghost: !!o.ghost });
+}
+animators.push((t, night, dt) => {
+  WIN_NIGHT.value = night;
+  for (const w of WINS) {
+    w.next -= dt; if (w.next < 0) { w.on = !w.on; w.next = w.on ? 45 + Math.random() * 180 : 5 + Math.random() * 35; }
+    w.lvl += ((w.on ? 1 : 0) - w.lvl) * Math.min(1, dt * (w.on ? 1.2 : 6));
+    const u = w.mat.uniforms, s = w.sil;
+    u.lit.value = w.lvl; u.I.value = (w.ghost ? 1.25 : 1.0) * flick(t, w.s);
+    if (s.on === 0 && w.lvl > 0.9 && Math.random() < dt / 75) {
+      s.v = (Math.random() < 0.5 ? -1 : 1) * (0.05 + Math.random() * 0.08); s.x = s.v > 0 ? -0.35 : 1.35; s.mid = 0.3 + Math.random() * 0.4; s.pause = Math.random() < 0.45 ? 2 + Math.random() * 6 : 0; s.on = 1;
+    }
+    if (s.on) { if (s.pause > 0 && Math.abs(s.x - s.mid) < 0.03) s.pause -= dt; else s.x += s.v * dt; if (s.x < -0.4 || s.x > 1.4) s.on = 0; }
+    u.sx.value = s.x; u.sOn.value = s.on;
+  }
+});
+
+// ---------- the manor: Second Empire mansard, a central pavilion with a rose window, bay windows, two towers ----------
+function frustum(bw, bd, tw, td, h) {
+  const g = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const top = p.getY(i) > 0.5; p.setXYZ(i, p.getX(i) * (top ? tw : bw), top ? h : 0, p.getZ(i) * (top ? td : bd)); }
+  g.computeVertexNormals(); return g;
+}
+const cresting = (pts, y) => { for (let i = 0; i < pts.length - 1; i++) { const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / 1.1)); for (let k = 0; k < n; k++) { const x = ax + (bx - ax) * k / n, z = az + (bz - az) * k / n; S.push(cyl(0.06, 0.06, 1.4, 4, x, y + 0.7, z, 'iron'), cone(0.18, 0.5, 4, x, y + 1.6, z, 'iron')); } S.push(place(box(0.1, 0.12, Math.hypot(bx - ax, bz - az), 0, 0, Math.hypot(bx - ax, bz - az) / 2, 'iron'), ax, y + 1.2, az, Math.atan2(bx - ax, bz - az))); } };
+{
+  const mx = MANOR.x, mz = MANOR.z, g = W.groundMin(mx, mz, 0, 56, 36) - 0.6, gb = g + 2, w = 44, d = 26, H = 24, front = mz + d / 2;
+  const B = (...a) => S.push(box(...a)), Lw = (geo) => S.push(place(geo, mx, gb, mz, 0));
+  // plinth, walls, quoins, string courses, bracketed cornice
+  B(w + 3, 2.4, d + 3, mx, g + 1.2, mz, 'stoneDark');
+  B(w, H, d, mx, gb + H / 2, mz, 'wall');
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (let k = 0; k < 15; k++) B(k % 2 ? 2.2 : 1.3, 1.5, k % 2 ? 1.3 : 2.2, mx + sx * (w / 2 - (k % 2 ? 0.85 : 0.4)), gb + 0.8 + k * 1.6, mz + sz * (d / 2 - (k % 2 ? 0.4 : 0.85)), 'trim');
+  for (const y of [8, 16]) B(w + 0.8, 0.7, d + 0.8, mx, gb + y, mz, 'trim');
+  B(w + 2.6, 1.3, d + 2.6, mx, gb + H + 0.65, mz, 'trim');
+  for (let x = -w / 2; x <= w / 2; x += 1.8) for (const s of [-1, 1]) B(0.5, 1.1, 1.1, mx + x, gb + H - 0.5, mz + s * (d / 2 + 0.5), 'trim');
+  for (let z = -d / 2; z <= d / 2; z += 1.8) for (const s of [-1, 1]) B(1.1, 1.1, 0.5, mx + s * (w / 2 + 0.5), gb + H - 0.5, mz + z, 'trim');
+  // the mansard: steep lower slope, gentle top, iron cresting; gargoyles crouch at the corners
+  S.push(tint(frustum(w + 2.4, d + 2.4, w - 4, d - 4, 9).translate(mx, gb + H + 1.3, mz), 'roof'));
+  S.push(tint(frustum(w - 4, d - 4, w - 12, d - 11, 2.6).translate(mx, gb + H + 10.3, mz), 'roof'));
+  S.push(box(w - 3.6, 0.5, d - 3.6, mx, gb + H + 10.3, mz, 'trim'));
+  { const yt = gb + H + 12.9, hx = (w - 12) / 2, hz = (d - 11) / 2; cresting([[mx - hx, mz - hz], [mx + hx, mz - hz], [mx + hx, mz + hz], [mx - hx, mz + hz], [mx - hx, mz - hz]], yt); }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const x = mx + sx * (w / 2 + 1.4), z = mz + sz * (d / 2 + 1.4), y = gb + H + 1.3, ry = Math.atan2(sx, sz);
+    for (const p of [box(0.9, 1.1, 1.3, 0, 0.55, 0, 'stoneDark'), ball(0.5, 0, 1.4, 0.55, 'stoneDark', 0), cone(0.18, 0.6, 4, -0.25, 1.9, 0.5, 'stoneDark'), cone(0.18, 0.6, 4, 0.25, 1.9, 0.5, 'stoneDark'),
+      tint(new THREE.BoxGeometry(0.1, 1.2, 1.3).rotateZ(0.5).translate(-0.75, 1.3, -0.1), 'stoneDark'), tint(new THREE.BoxGeometry(0.1, 1.2, 1.3).rotateZ(-0.5).translate(0.75, 1.3, -0.1), 'stoneDark')]) S.push(place(p, x, y, z, ry));
+  }
+  // dormers with arched windows on all four slopes
+  const dormer = (lx, lz, ry) => {
+    const parts = [box(3.8, 4.6, 4.2, 0, 2.3, -1.2, 'wall'), tint(new THREE.CylinderGeometry(2.2, 2.2, 4.8, 10, 1, false, -Math.PI / 2, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2).translate(0, 4.6, -1.0), 'roof'), box(4.2, 0.4, 0.5, 0, 0.1, 0.9, 'trim')];
+    for (const p of parts) S.push(place(p, ...toWorld(lx, 0, lz, mx, gb + H + 1.6, mz, 0).toArray(), ry));
+    addWin(2.2, 3.4, lx + Math.sin(ry) * 0.95, 2.5, lz + Math.cos(ry) * 0.95, ry, mx, gb + H + 1.6, mz, 0, { arch: true, pOn: 0.45 });
+  };
+  for (const x of [-17, -9.5, 9.5, 17]) { dormer(x, d / 2 - 0.2, 0); dormer(x, -d / 2 + 0.2, Math.PI); }
+  for (const s of [-1, 1]) dormer(s * (w / 2 - 0.2), 0, s * Math.PI / 2);
+  // tall chimneys with corbelled caps and pots
+  for (const [cx, cz] of [[-14, -5], [-14, 5], [14, -5], [14, 5]]) {
+    B(3.2, 16, 2.2, mx + cx, gb + H + 8, mz + cz, 'stoneDark'); B(4, 0.6, 3, mx + cx, gb + H + 15.6, mz + cz, 'stone'); B(3.6, 0.6, 2.6, mx + cx, gb + H + 16.2, mz + cz, 'stoneDark');
+    for (const s of [-0.8, 0.8]) S.push(cyl(0.45, 0.55, 1.8, 7, mx + cx + s, gb + H + 17.4, mz + cz, 'mud'));
+  }
+  smokeSources.push(new THREE.Vector3(mx + 14.8, gb + H + 18.4, mz + 5));
+  // windows with carved surrounds: pediments on the ground floor, arches above, keystones on top
+  const facadeWin = (lx, ly, lz, ry, fl, o = {}) => {
+    const P_ = (geo) => S.push(place(geo, ...toWorld(lx, 0, lz, mx, gb, mz, 0).toArray(), ry)), ww = 2.3, wh = fl === 1 ? 4.0 : 3.6;
+    P_(box(ww + 0.9, 0.45, 0.7, 0, ly - wh / 2 - 0.25, 0.3, 'trim'));
+    for (const s of [-1, 1]) P_(box(0.35, wh, 0.35, s * (ww / 2 + 0.17), ly, 0.15, 'trim'));
+    if (fl === 0) P_(tint(W.gable(ww + 1.4, 0.5, 1.1).translate(0, ly + wh / 2 + 0.2, 0.3), 'trim'));
+    else if (fl === 1) P_(tint(new THREE.TorusGeometry(ww / 2 + 0.15, 0.2, 4, 10, Math.PI).translate(0, ly + wh / 2 - ww / 2, 0.15), 'trim'));
+    else { P_(box(ww + 0.8, 0.5, 0.45, 0, ly + wh / 2 + 0.25, 0.2, 'trim')); P_(box(0.6, 0.8, 0.5, 0, ly + wh / 2 + 0.3, 0.3, 'stone')); }
+    const roll = rnd();
+    if (o.boarded ?? roll < 0.1) { P_(box(ww, wh, 0.1, 0, ly, 0.05, 'darkWin')); for (const a of [0.55, -0.45, 0.1]) P_(tint(new THREE.BoxGeometry(ww + 0.8, 0.42, 0.15).rotateZ(a).translate(0, ly + a, 0.2), 'wood')); }
+    else addWin(ww, wh, lx + Math.sin(ry) * 0.06, ly, lz + Math.cos(ry) * 0.06, ry, mx, gb, mz, 0, { arch: fl === 1 });
+    if (rnd() < 0.55) for (const s of [-1, 1]) { const cr = rnd() < 0.1; P_(tint(new THREE.BoxGeometry(1.1, wh + 0.2, 0.15).rotateZ(cr ? 0.45 * s : 0).translate(s * (ww / 2 + 0.95) + (cr ? s * 0.5 : 0), ly - (cr ? 0.5 : 0), 0.15), 'woodDark')); }
+  };
+  const FY = [4.6, 12.4, 20.2];
+  for (const x of [-19.5, 19.5]) FY.forEach((y, fl) => facadeWin(x, y, d / 2, 0, fl));
+  for (const x of [-13, 13]) facadeWin(x, FY[2], d / 2, 0, 2);
+  for (const x of [-18, -11, -4, 4, 11, 18]) FY.forEach((y, fl) => facadeWin(x, y, -d / 2, Math.PI, fl, { boarded: rnd() < 0.18 }));
+  for (const z of [-8, -1]) FY.forEach((y, fl) => facadeWin(w / 2, y, z, Math.PI / 2, fl));
+  FY.forEach((y, fl) => facadeWin(-w / 2, y, 8, -Math.PI / 2, fl));
+  facadeWin(-w / 2, FY[2], -2, -Math.PI / 2, 2); facadeWin(-w / 2, FY[2], -9, -Math.PI / 2, 2);
+  // two-storey bay windows either side of the pavilion
+  for (const bx of [-12.5, 12.5]) {
+    Lw(tint(new THREE.CylinderGeometry(4.3, 4.3, 15.4, 3, 1, false, -Math.PI / 2, Math.PI).translate(bx, 7.7, d / 2), 'wall'));
+    for (const y of [0.3, 8, 15.6]) Lw(tint(new THREE.CylinderGeometry(4.6, 4.6, 0.6, 3, 1, false, -Math.PI / 2, Math.PI).translate(bx, y, d / 2), 'trim'));
+    Lw(tint(new THREE.ConeGeometry(4.8, 3.2, 3, 1, false, -Math.PI / 2, Math.PI).translate(bx, 17.5, d / 2), 'roof'));
+    for (const th of [-Math.PI / 3, 0, Math.PI / 3]) for (const y of [4.3, 12]) { const rf = 4.3 * Math.cos(Math.PI / 6) + 0.06; addWin(1.7, 3.3, bx + Math.sin(th) * rf, y, d / 2 + Math.cos(th) * rf, th, mx, gb, mz, 0); }
+  }
+  // the central pavilion: taller, its own steep roof with cresting and a finial, a stained-glass rose window
+  const pw = 14, pf = front + 5;
+  B(pw, H + 7, 6, mx, gb + (H + 7) / 2, front + 2, 'wall');
+  for (const sx of [-1, 1]) for (let k = 0; k < 19; k++) B(k % 2 ? 1.8 : 1.1, 1.5, 1.1, mx + sx * (pw / 2 - 0.5), gb + 0.8 + k * 1.6, pf - 0.4, 'trim');
+  B(pw + 1.6, 1.2, 7.6, mx, gb + H + 7.6, front + 2, 'trim');
+  S.push(tint(frustum(pw + 1.6, 9, 4, 3.4, 13).translate(mx, gb + H + 8.2, front + 1.2), 'roof'));
+  cresting([[mx - 2, front - 0.5], [mx + 2, front - 0.5], [mx + 2, front + 2.9], [mx - 2, front + 2.9], [mx - 2, front - 0.5]], gb + H + 21.2);
+  S.push(cyl(0.12, 0.2, 7, 5, mx, gb + H + 25, front + 1.2, 'iron'), ball(0.45, mx, gb + H + 24, front + 1.2, 'iron', 0));
+  {
+    const ry_ = gb + H + 2.4, rz = pf + 0.07, R = 2.7, cols = [P.mauve, P.red, P.teal, P.yellow, P.blue, P.peach, P.green, P.pink];
+    for (let i = 0; i < 8; i++) { const m = new THREE.Mesh(new THREE.CircleGeometry(R, 3, i * Math.PI / 4, Math.PI / 4), glowMat(cols[i], 0.25, 0.85)); m.position.set(mx, ry_, rz); scene.add(m); }
+    S.push(tint(new THREE.TorusGeometry(R + 0.2, 0.35, 4, 24).translate(mx, ry_, rz + 0.05), 'trim'), tint(new THREE.TorusGeometry(R * 0.4, 0.14, 4, 12).translate(mx, ry_, rz + 0.08), 'iron'));
+    for (let i = 0; i < 4; i++) S.push(tint(new THREE.BoxGeometry(0.16, R * 2, 0.1).rotateZ(i * Math.PI / 4).translate(mx, ry_, rz + 0.1), 'iron'));
+  }
+  addWin(2.8, 4.8, 0, FY[1] + 0.3, d / 2 + 5.07, 0, mx, gb, mz, 0, { arch: true, pOn: 0.9 });
+  S.push(tint(new THREE.TorusGeometry(1.6, 0.22, 4, 10, Math.PI).translate(mx, gb + FY[1] + 1.3, pf + 0.15), 'trim'));
+  // portico with columns, a balcony on top, steps down to the forecourt, the double door with its fanlight
+  B(16, 2.4, 7.5, mx, g + 1.2, pf + 3.75, 'stoneDark');
+  for (const cx of [-6.5, -2.6, 2.6, 6.5]) { S.push(cyl(0.55, 0.62, 8.6, 10, mx + cx, gb + 4.6, pf + 6.6, 'trim'), box(1.6, 0.6, 1.6, mx + cx, gb + 0.3, pf + 6.6, 'stone'), box(1.7, 0.7, 1.7, mx + cx, gb + 9.2, pf + 6.6, 'stone')); }
+  B(16.6, 1.5, 8, mx, gb + 10.3, pf + 3.8, 'trim');
+  for (let x = -7.8; x <= 7.8; x += 1.0) S.push(cyl(0.16, 0.24, 1.5, 6, mx + x, gb + 11.8, pf + 7.4, 'trim'));
+  for (let z = pf + 0.5; z < pf + 7.4; z += 1.0) for (const s of [-1, 1]) S.push(cyl(0.16, 0.24, 1.5, 6, mx + s * 7.8, gb + 11.8, z, 'trim'));
+  B(16.4, 0.4, 0.7, mx, gb + 12.7, pf + 7.4, 'stone'); for (const s of [-1, 1]) B(0.7, 0.4, 7.4, mx + s * 7.8, gb + 12.7, pf + 3.8, 'stone');
+  for (let i = 0; i < 3; i++) B(12 - i * 0.01, 0.65, 1.3, mx, gb - 0.35 - i * 0.65 + 0.1, pf + 8.1 + i * 1.3, 'stone');
+  for (const s of [-1, 1]) { B(2.1, 7.6, 0.35, mx + s * 1.1, gb + 3.8, pf + 0.12, 'woodDark'); for (const y of [2, 5.4]) B(1.5, 2.4, 0.15, mx + s * 1.1, gb + y, pf + 0.33, 'wood'); S.push(tint(new THREE.TorusGeometry(0.3, 0.07, 4, 8).translate(mx + s * 0.55, gb + 4, pf + 0.42), 'iron')); }
+  addWin(4.4, 2.2, 0, 8.7, d / 2 + 5.06, 0, mx, gb, mz, 0, { arch: true, pOn: 0.95, color: P.peach });
+  for (const s of [-1, 1]) { S.push(box(0.2, 0.2, 1.2, mx + s * 3.6, gb + 5.6, pf + 0.6, 'iron')); DIM.push(plain(new THREE.BoxGeometry(0.7, 1.1, 0.7).translate(mx + s * 3.6, gb + 5.2, pf + 1.3))); }
+  // round turret at the front-right corner with a crooked weather vane and a ghost-lit attic window
+  const tx = mx + w / 2 + 1, tz = front - 1.5, tH = 44, tr = 7.5;
+  S.push(cyl(tr, tr + 0.3, tH, 16, tx, gb + tH / 2, tz, 'wall2'));
+  for (const y of [8, 16, 24, 32]) S.push(cyl(tr + 0.35, tr + 0.35, 0.6, 16, tx, gb + y, tz, 'trim'));
+  S.push(cyl(tr + 0.8, tr + 0.8, 1.3, 16, tx, gb + tH + 0.4, tz, 'trim'));
+  for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2; S.push(box(0.5, 1.0, 0.5, tx + Math.sin(a) * (tr + 0.5), gb + tH - 0.6, tz + Math.cos(a) * (tr + 0.5), 'trim')); }
+  S.push(tint(new THREE.ConeGeometry(tr + 1.6, 24, 16).translate(tx, gb + tH + 13, tz), 'roof'));
+  S.push(cyl(0.15, 0.15, 7, 4, tx, gb + tH + 28, tz, 'iron'), ball(0.5, tx, gb + tH + 26, tz, 'iron', 0), tint(new THREE.BoxGeometry(3.4, 0.12, 0.12).rotateY(0.6).translate(tx, gb + tH + 30, tz), 'iron'), tint(new THREE.ConeGeometry(0.5, 1.3, 3).rotateZ(-Math.PI / 2).rotateY(0.6).translate(tx + 1.4, gb + tH + 30, tz - 1.0), 'iron'));
+  for (const [a, y, gh] of [[0.2, 4.6, 0], [0.9, 4.6, 0], [0.3, 12.4, 0], [1.1, 12.4, 0], [-0.3, 20.2, 0], [0.6, 20.2, 0], [0.4, 28, 0], [0.15, 38, 1]]) {
+    const rf = tr + 0.12; addWin(1.8, gh ? 3.4 : 3.2, Math.sin(a) * rf, y, Math.cos(a) * rf, a, tx, gb, tz, 0, gh ? { color: P.teal, ghost: true, arch: true, pOn: 0.8 } : { arch: y > 10 });
+  }
+  // octagonal tower at the back-left corner with a slate spire
+  const ox = mx - w / 2 + 1, oz = mz - d / 2 + 1, oH = 38;
+  S.push(cyl(5.6, 5.8, oH, 8, ox, gb + oH / 2, oz, 'wall'), cyl(6.2, 6.2, 1, 8, ox, gb + oH, oz, 'trim'), tint(new THREE.ConeGeometry(6.6, 18, 8).translate(ox, gb + oH + 9.5, oz), 'roof'), cyl(0.12, 0.12, 5, 4, ox, gb + oH + 20, oz, 'iron'));
+  for (const [a, y] of [[-2.4, 14], [-1.6, 22], [-2.0, 30], [-0.8, 30]]) addWin(1.2, 3.4, Math.sin(a) * 5.75, y, Math.cos(a) * 5.75, a, ox, gb, oz, 0, { arch: true, pOn: 0.5 });
+  // west wing: lower and older, with a big arched window in its gable
+  const wx = mx - w / 2 - 12, wz = mz - 3, ww = 22, wd = 20, wH = 15;
+  B(ww, wH, wd, wx, gb + wH / 2, wz, 'wall2'); B(ww + 0.6, 0.6, wd + 0.6, wx, gb + 8, wz, 'trim'); B(ww + 2, 1, wd + 2, wx, gb + wH + 0.5, wz, 'trim');
+  B(ww + 3, 2.4, wd + 3, wx, g + 1.2, wz, 'stoneDark');
+  S.push(tint(W.gable(ww + 2.4, wd + 2.4, 12).translate(wx, gb + wH + 1, wz), 'roof'));
+  for (const z of [-6, 2]) for (const y of [4.4, 11.6]) addWin(2.1, 3.4, -ww / 2 - 0.07, y, z, -Math.PI / 2, wx, gb, wz, 0, { arch: y > 8 });
+  addWin(4, 6.5, 0, 10, wd / 2 + 0.07, 0, wx, gb, wz, 0, { arch: true, pOn: 0.8 });
+  for (const x of [-7, 7]) addWin(2.1, 3.4, x, 4.4, wd / 2 + 0.07, 0, wx, gb, wz, 0);
+  // ivy creeping up the corners
+  for (let i = 0; i < 260; i++) {
+    const side = pick([[-w / 2, 1], [w / 2, 1], [-w / 2 - 12 - ww / 2, 1]]), sz = d / 2 - rnd() * 6, y = rnd() * rnd() * 20;
+    const x = mx + side[0] + (rnd() - 0.5) * 3, z = mz + sz + 0.2 + rnd() * 0.3;
+    S.push(tint(new THREE.BoxGeometry(0.9 + rnd() * 0.8, 0.9 + rnd() * 0.8, 0.2).rotateZ(rnd() * 3).translate(x, gb + y, z), rnd() < 0.5 ? 'moss' : 'stem'));
+  }
+  addLight(P.peach, 45, 36, mx, gb + 6, pf + 9);
+  SIGHTS.push(new THREE.Vector3(mx, gb + 20, mz)); SIGHTS.push(new THREE.Vector3(tx, gb + tH, tz));
+  MANOR.g = gb; MANOR.steps = { z: pf + 11, y: PLAT_H }; MANOR.tower = new THREE.Vector3(tx, gb + tH + 14, tz);
+}
+
+// ---------- pumpkins: the great jack-o'-lantern by the steps, small ones on the porch, a patch with a scarecrow ----------
+function pumpkinGeo(r, carved) {
+  const prof = []; for (let i = 0; i <= 10; i++) { const a = i / 10 * Math.PI; prof.push(new THREE.Vector2(Math.sin(a) * r, -Math.cos(a) * r * 0.8)); }
+  const g = new THREE.LatheGeometry(prof, 12), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i), ang = Math.atan2(z, x), k = 1 - 0.09 * Math.pow(Math.abs(Math.cos(ang * 6)), 0.5); p.setX(i, x * k); p.setZ(i, z * k); }
+  g.computeVertexNormals(); g.translate(0, r * 0.8, 0);
+  const parts = [tint(g, 'pumpkin'), tint(new THREE.CylinderGeometry(r * 0.08, r * 0.12, r * 0.45, 5).rotateZ(0.3).translate(r * 0.05, r * 1.75, 0), 'stem')];
+  return mergeGeometries(parts);
+}
+const FACE_MATS = [];
+function jackFace(r, x, y, z, ry, s) {
+  const m = glowMat(P.peach, 0.5, 1.7); FACE_MATS.push({ m, s });
+  const sh = [];
+  const tri = (cx, cy, w, h, flip = 1) => { const t = new THREE.Shape(); t.moveTo(cx - w / 2, cy - flip * h / 2); t.lineTo(cx + w / 2, cy - flip * h / 2); t.lineTo(cx, cy + flip * h / 2); t.closePath(); return new THREE.ShapeGeometry(t); };
+  sh.push(tri(-0.36 * r, 0.25 * r, 0.32 * r, 0.3 * r), tri(0.36 * r, 0.25 * r, 0.32 * r, 0.3 * r), tri(0, 0.02 * r, 0.16 * r, 0.16 * r));
+  const mouth = new THREE.Shape(); const mw = 0.62 * r, my = -0.28 * r;
+  mouth.moveTo(-mw, my + 0.1 * r); for (let i = 0; i <= 6; i++) { const u = i / 6, xx = -mw + 2 * mw * u; mouth.lineTo(xx, my - 0.18 * r * Math.sin(Math.PI * u) + (i % 2 ? 0.07 * r : -0.05 * r)); }
+  mouth.lineTo(mw, my + 0.1 * r); for (let i = 6; i >= 0; i--) { const u = i / 6, xx = -mw + 2 * mw * u; mouth.lineTo(xx, my - 0.04 * r - 0.12 * r * Math.sin(Math.PI * u) + (i === 2 || i === 4 ? -0.1 * r : 0)); }
+  sh.push(new THREE.ShapeGeometry(mouth));
+  const geo = mergeGeometries(sh.map((g) => { g.deleteAttribute('uv'); return g; }));
+  const mesh = new THREE.Mesh(geo, m); mesh.position.copy(toWorld(0, r * 0.82, r * 0.93, x, y, z, ry)); mesh.rotation.y = ry; mesh.rotation.x = -0.12; scene.add(mesh);
+}
+{
+  const g = MANOR.g, sz0 = MANOR.steps.z;
+  // the great one on a stone pedestal on the forecourt, beside the front steps
+  const jx = -9, jz = sz0 + 3, jg = PLAT_H;
+  S.push(box(4.6, 2.4, 4.6, jx, jg + 1.2, jz, 'stone'), box(5.2, 0.5, 5.2, jx, jg + 2.5, jz, 'stoneDark'));
+  S.push(place(pumpkinGeo(3.2).clone(), jx, jg + 2.7, jz, 0.15));
+  jackFace(3.2, jx, jg + 2.7, jz, 0.15, 1);
+  const jl = addLight(P.peach, 0, 55, jx, jg + 7, jz + 5);
+  halo(mix(P.peach, P.yellow, 0.2), 11, jx, jg + 5.5, jz + 3.4, 0.04, 0.16, 1);
+  animators.push((t, night) => { jl.L.intensity = (25 + 140 * night) * flick(t, 1); });
+  SIGHTS.push(new THREE.Vector3(jx, jg + 5, jz));
+  // little ones on the front steps, the portico balcony and the pillars at the foot of the grand stairs
+  const small = [[4.6, g + 0.08, sz0 - 2.6, 1.0], [-4.4, g - 0.57, sz0 - 1.3, 0.9], [5, g - 1.22, sz0, 1.15], [-6.4, g + 13.1, sz0 - 3.4, 0.8], [6.6, g + 13.1, sz0 - 3.4, 0.85], ...STAIR_PUMPKINS.map(([x, y, z]) => [x, y, z, 1.1])];
+  for (const [x, y, z, r] of small) { const ry = (rnd() - 0.5) * 0.6; S.push(place(pumpkinGeo(r).clone(), x, y, z, ry)); jackFace(r, x, y, z, ry, rnd() * 40); }
+  // pumpkin patch with a scarecrow, east of the house below the terrace
+  const px = 88, pzz = 64;
+  for (let i = 0; i < 26; i++) { const x = px + (rnd() - 0.5) * 34, z = pzz + (rnd() - 0.5) * 24, r = 0.9 + rnd() * 1.4; S.push(place(pumpkinGeo(r).clone(), x, groundAt(x, z) - 0.2, z, rnd() * 6.28)); }
+  for (let i = 0; i < 18; i++) { const x = px + (rnd() - 0.5) * 36, z = pzz + (rnd() - 0.5) * 26; S.push(tint(new THREE.TorusGeometry(1.4, 0.12, 3, 8, Math.PI * 1.2).rotateX(Math.PI / 2).rotateY(rnd() * 6).translate(x, groundAt(x, z) + 0.15, z), 'stem')); }
+  const sx = px + 4, sz = pzz - 2, sg = groundAt(sx, sz);
+  S.push(cyl(0.22, 0.25, 11, 5, sx, sg + 5.5, sz, 'wood'), box(8, 0.35, 0.35, sx, sg + 8.4, sz, 'wood'));
+  S.push(tint(new THREE.CylinderGeometry(1.3, 1.9, 4.2, 6).translate(sx, sg + 7.2, sz), 'cloth2'), box(8.6, 1.0, 1.1, sx, sg + 8.4, sz, 'cloth2'));
+  for (const s of [-1, 1]) S.push(cone(0.45, 1.2, 5, sx + s * 4.5, sg + 8.0, sz, 'straw'));
+  S.push(ball(1.15, sx, sg + 10.4, sz, 'straw'), cyl(1.9, 1.9, 0.2, 10, sx, sg + 11.3, sz, 'woodDark'), tint(new THREE.ConeGeometry(0.95, 2.2, 8).rotateZ(0.25).translate(sx - 0.2, sg + 12.4, sz), 'woodDark'));
+  S.push(box(0.3, 0.3, 0.1, sx - 0.4, sg + 10.6, sz + 1.1, 'iron'), box(0.3, 0.3, 0.1, sx + 0.4, sg + 10.6, sz + 1.1, 'iron'));
+  keepClear.push({ x: px, z: pzz, r: 22 });
+}
+
+// ---------- dry fountain at the centre of the drive loop ----------
+{
+  const { x, z } = FOUNT, g = groundAt(x, z) - 0.3;
+  S.push(cyl(12, 12.5, 2.2, 20, x, g + 1.1, z, 'stone'), cyl(10.8, 10.8, 0.3, 20, x, g + 1.6, z, 'fountainW'));
+  S.push(cyl(1.4, 2, 5, 8, x, g + 4, z, 'stoneDark'), cyl(4, 1.4, 1.4, 12, x, g + 7, z, 'stone'), cyl(0.9, 1.2, 3, 8, x, g + 9, z, 'stoneDark'));
+  // a hooded stone figure with an urn on top
+  S.push(cone(1.6, 4.5, 8, x, g + 12.6, z, 'moss'), ball(0.8, x, g + 15.2, z, 'moss'), cone(1.0, 1.6, 8, x, g + 15.7, z, 'moss'));
+  for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; S.push(ball(0.6 + rnd() * 0.4, x + Math.cos(a) * 11.4, g + 2.3, z + Math.sin(a) * 11.4, 'moss', 0)); }
+  SIGHTS.push(new THREE.Vector3(x, g + 6, z));
+}
+
+// ---------- lanterns along the drive (one or two have gone out) ----------
+for (let z = FOUNT.z + 40; z < FENCE.z1 - 8; z += 30) for (const s of [-1, 1]) {
+  const x = s * 7.5, g = groundAt(x, z);
+  S.push(cyl(0.22, 0.32, 7, 6, x, g + 3.5, z, 'iron'), box(1.3, 0.2, 1.3, x, g + 7.1, z, 'iron'), cone(1.0, 1.0, 4, x, g + 8.9, z, 'iron'));
+  if (rnd() < 0.8) { DIM.push(plain(new THREE.BoxGeometry(0.9, 1.3, 0.9).translate(x, g + 7.9, z))); } else S.push(box(0.9, 1.3, 0.9, x, g + 7.9, z, 'darkWin'));
+}
+
+// ---------- wrought-iron fence round the estate, stone pillars, the gate ----------
+{
+  const { x0, x1, z0, z1 } = FENCE, corners = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
+  // each side gets a few damaged stretches: a gap, bars bent outward or inward, a panel fallen flat, a leaning pillar;
+  // across one gap lies a fallen dead tree
+  let treeDone = false;
+  const run = (ax, az, bx, bz, gapAt = null) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.round(len / 2.4), ry = Math.atan2(bx - ax, bz - az);
+    const zones = [];
+    for (let k = 0, nz = 2 + (rnd() < 0.6 ? 1 : 0); k < nz; k++) {
+      const s = 4 + Math.floor(rnd() * (n - 14)), l = 3 + Math.floor(rnd() * 5);
+      if (gapAt && Math.abs((s + l / 2) / n - 0.5) < 0.12) continue;                                  // keep the gate clear
+      zones.push({ s, e: s + l, type: pick(['gap', 'bent', 'bent', 'fallen']), dir: rnd() < 0.5 ? -1 : 1, lean: rnd() < 0.6 });
+    }
+    const zoneAt = (i) => zones.find((zn) => i >= zn.s && i <= zn.e);
+    const open = (i) => { const zn = zoneAt(i); return zn && (zn.type === 'gap' || zn.type === 'fallen'); };
+    for (let i = 0; i <= n; i++) {
+      const u = i / n, x = ax + (bx - ax) * u, z = az + (bz - az) * u;
+      if (gapAt && Math.hypot(x - gapAt[0], z - gapAt[1]) < GATE_W / 2 + 2) continue;
+      const g = groundAt(x, z), zn = zoneAt(i), k = zn ? (i - zn.s) / Math.max(1, zn.e - zn.s) : 0;
+      if (i % 11 === 0) {
+        const tilt = zn && zn.lean ? zn.dir * 0.16 : 0;
+        for (const p of [box(2, 8.5, 2, 0, 3.75, 0, 'stone'), box(2.6, 0.6, 2.6, 0, 8.1, 0, 'stoneDark'), cone(1.0, 1.4, 4, 0, 9.1, 0, 'stone')]) S.push(place(p.rotateZ(tilt), x, g, z, ry));
+        continue;
+      }
+      if (zn && zn.type === 'gap') {
+        if (rnd() < 0.4) { const h = 0.8 + rnd() * 2.4; S.push(place(tint(new THREE.BoxGeometry(0.16, h, 0.16).translate(0, h / 2, 0).rotateZ((rnd() - 0.5) * 0.5), 'iron'), x, g, z, ry)); }
+        if (!treeDone && i === Math.round((zn.s + zn.e) / 2)) {
+          treeDone = true;
+          const trunk = [tint(new THREE.CylinderGeometry(0.7, 1.3, 34, 7).rotateZ(Math.PI / 2).translate(0, 1.0, 0), 'bark'), tint(new THREE.CylinderGeometry(0.2, 0.5, 9, 5).rotateZ(Math.PI / 2 - 0.7).translate(-6, 3.6, 1.5), 'bark'), tint(new THREE.CylinderGeometry(0.15, 0.4, 7, 5).rotateZ(-Math.PI / 2 + 0.5).rotateY(0.6).translate(5, 2.8, -1.5), 'bark2'), tint(new THREE.CylinderGeometry(1.6, 1.8, 2.2, 7).rotateZ(Math.PI / 2).translate(-17, 1.3, 0), 'bark2')];
+          for (const p of trunk) S.push(place(p, x, g, z, ry + 0.25));
+        }
+        continue;
+      }
+      if (zn && zn.type === 'fallen') {
+        S.push(place(tint(new THREE.BoxGeometry(0.16, 6.4, 0.16).translate(0, 3.2, 0).rotateZ(zn.dir * (Math.PI / 2 - 0.08)), 'iron'), x, g + 0.15, z, ry));
+        if (i < n) for (const y of [1.0, 5.4]) S.push(place(box(0.22, 0.12, 2.4, zn.dir * y, 0.3, 1.2, 'iron'), x, g, z, ry));
+        continue;
+      }
+      if (zn && zn.type === 'bent') {
+        const tilt = zn.dir * 0.85 * Math.sin(Math.PI * k) + (rnd() - 0.5) * 0.1;
+        S.push(place(box(0.16, 2.4, 0.16, 0, 1.2, 0, 'iron'), x, g, z, ry));
+        const upper = mergeGeometries([box(0.16, 4.0, 0.16, 0, 2.0, 0, 'iron'), cone(0.28, 0.9, 4, 0, 4.4, 0, 'iron')]).rotateZ(tilt).translate(0, 2.4, 0);
+        S.push(place(upper, x, g, z, ry));
+      } else {
+        S.push(box(0.16, 6.4, 0.16, x, g + 3.0, z, 'iron'));
+        if (rnd() > 0.06) S.push(cone(0.28, 0.9, 4, x, g + 6.6, z, 'iron'));
+      }
+      if (i < n && !open(i + 1)) { const nx = ax + (bx - ax) * (i + 1) / n, nz = az + (bz - az) * (i + 1) / n, ng = groundAt(nx, nz), seg = Math.hypot(nx - x, nz - z); for (const y of (zn || zoneAt(i + 1)) ? [1.0] : [1.0, 5.4]) S.push(place(tint(new THREE.BoxGeometry(0.12, 0.22, seg).rotateX(-Math.atan2(ng - g, seg)).translate(0, 0, seg / 2), 'iron'), x, g + y, z, ry)); }
+      if (i % 3 === 1 && !zn) S.push(place(tint(new THREE.TorusGeometry(0.55, 0.06, 3, 8).rotateY(Math.PI / 2), 'iron'), x, g + 4.6, z, ry));
+    }
+  };
+  for (let i = 0; i < 4; i++) { const [ax, az] = corners[i], [bx, bz] = corners[(i + 1) % 4]; run(ax, az, bx, bz, i === 0 ? [0, z1] : null); }
+  // the gate: tall pillars with lanterns, an iron arch, two leaves standing ajar
+  const g = groundAt(0, z1);
+  for (const s of [-1, 1]) {
+    const x = s * (GATE_W / 2 + 1.6);
+    S.push(box(3.2, 12, 3.2, x, g + 6, z1, 'stone'), box(3.8, 0.8, 3.8, x, g + 12.2, z1, 'stoneDark'), ball(1.2, x, g + 13.8, z1, 'stone', 0));
+    DIM.push(plain(new THREE.BoxGeometry(1.1, 1.5, 1.1).translate(x, g + 9.6, z1 + 2.2)));
+    S.push(box(0.2, 0.2, 1.6, x, g + 9.6, z1 + 1.5, 'iron'), box(1.4, 0.2, 1.4, x, g + 10.45, z1 + 2.2, 'iron'));
+    const leaf = []; const lw = GATE_W / 2;
+    for (let k = 0; k <= 7; k++) { const lx = -s * k * lw / 7, h = 7.5 + 2.2 * Math.sin(Math.PI * k / 7); leaf.push(box(0.16, h, 0.16, lx, h / 2, 0, 'iron'), cone(0.28, 0.9, 4, lx, h + 0.4, 0, 'iron')); }
+    leaf.push(box(lw, 0.25, 0.16, -s * lw / 2, 1.2, 0, 'iron'), box(lw, 0.25, 0.16, -s * lw / 2, 6.5, 0, 'iron'));
+    const lg = mergeGeometries(leaf); lg.rotateY(s * (s > 0 ? -0.9 : -0.55)); lg.translate(x - s * 1.6, g, z1);
+    S.push(lg);
+  }
+  const arch = new THREE.TorusGeometry(GATE_W / 2 + 1.6, 0.22, 4, 20, Math.PI); S.push(tint(arch.translate(0, g + 12.5, z1), 'iron'));
+  for (let k = 0; k < 9; k++) { const a = (k + 0.5) / 9 * Math.PI, r = GATE_W / 2 + 1.6; S.push(cone(0.25, 1.0, 4, Math.cos(a) * r, g + 12.5 + Math.sin(a) * r + 0.6, z1, 'iron')); }
+  SIGHTS.push(new THREE.Vector3(0, g + 8, z1));
+}
+
+// ---------- the family crypt and its graveyard on the hill ----------
+let cryptDoorMat;
+{
+  const { x, z } = CRYPT, ry = Math.atan2(MANOR.x - x, MANOR.z - z), g = W.groundMin(x, z, ry, 16, 18) - 0.5;
+  const C = (geo) => S.push(place(geo, x, g, z, ry));
+  C(box(17, 1.2, 19, 0, 0.6, 0, 'stoneDark')); C(box(15, 1.0, 17, 0, 1.7, 0, 'stone'));
+  C(box(12, 10, 13, 0, 7.2, -1.5, 'stone'));
+  C(box(12.6, 0.8, 13.6, 0, 12.4, -1.5, 'stoneDark'));
+  C(tint(W.gable(13.4, 15, 4.5).translate(0, 12.8, -0.5), 'stoneDark'));
+  for (const cx of [-4.8, -1.6, 1.6, 4.8]) { C(cyl(0.55, 0.65, 9.6, 8, cx, 7, 6.2, 'stone')); C(box(1.5, 0.6, 1.5, cx, 2.5, 6.2, 'stoneDark')); C(box(1.5, 0.6, 1.5, cx, 11.9, 6.2, 'stoneDark')); }
+  C(box(4, 6.5, 0.3, 0, 5.4, 5.05, 'iron')); C(box(5, 0.8, 0.6, 0, 9.1, 5.1, 'stoneDark')); C(box(5.4, 0.9, 0.3, 0, 10.5, 5.3, 'trim'));
+  for (let k = -1.5; k <= 1.5; k += 0.75) C(box(0.12, 6.4, 0.12, k, 5.4, 5.25, 'iron'));
+  cryptDoorMat = glowMat(P.teal, 0.05, 0.9);
+  const crack = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 6.2), cryptDoorMat); crack.position.copy(toWorld(0, 5.4, 5.22, x, g, z, ry)); crack.rotation.y = ry; scene.add(crack);
+  // a stone angel on the pediment, urns on the corners
+  C(cone(0.9, 3, 7, 0, 18.4, 6.5, 'moss')); C(ball(0.5, 0, 20.3, 6.5, 'moss')); for (const s of [-1, 1]) C(tint(new THREE.BoxGeometry(0.2, 2.6, 1.4).rotateZ(s * 0.5).translate(s * 1.0, 19.4, 6.2), 'moss'));
+  for (const s of [-1, 1]) { C(cyl(0.5, 0.8, 1.6, 8, s * 6.6, 13.4, 5.8, 'stone')); C(ball(0.6, s * 6.6, 14.5, 5.8, 'stone', 0)); }
+  const dl = addLight(P.teal, 0, 30, ...toWorld(0, 4, 9, x, g, z, ry).toArray());
+  animators.push((t, night) => { const p = 0.7 + 0.3 * Math.sin(t * 0.8) * Math.sin(t * 0.33 + 1); cryptDoorMat.color.copy(P.teal).multiplyScalar((0.05 + 0.85 * night) * p); dl.L.intensity = 45 * night * p; });
+  SIGHTS.push(new THREE.Vector3(x, g + 9, z));
+  // graves scattered over the hill: headstones, crosses, obelisks, many of them leaning
+  for (let i = 0, k = 0; i < 2000 && k < 46; i++) {
+    const a = rnd() * 6.28, r = 16 + rnd() * 42, gx = x + Math.cos(a) * r, gz = z + Math.sin(a) * r;
+    if (Math.hypot(gx - 112, gz + 92) < 7 || W.slopeAt(gx, gz) > 0.5) continue;
+    const gy = groundAt(gx, gz) - 0.3, gry = ry + (rnd() - 0.5) * 0.4, tilt = (rnd() - 0.5) * 0.35, kind = rnd();
+    let parts;
+    if (kind < 0.55) { const h = 2.2 + rnd() * 1.6; parts = [box(1.8, h, 0.45, 0, h / 2, 0, pick(['stone', 'stoneDark', 'moss'])), tint(new THREE.CylinderGeometry(0.9, 0.9, 0.45, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2).translate(0, h, 0), 'stone')]; }
+    else if (kind < 0.85) { const h = 3 + rnd() * 1.5; parts = [box(0.4, h, 0.4, 0, h / 2, 0, 'stoneDark'), box(1.9, 0.4, 0.4, 0, h * 0.7, 0, 'stoneDark')]; }
+    else { const h = 5 + rnd() * 2; parts = [box(1.4, 0.8, 1.4, 0, 0.4, 0, 'stone'), tint(new THREE.CylinderGeometry(0.25, 0.6, h, 4).rotateY(Math.PI / 4).translate(0, h / 2 + 0.8, 0), 'stone'), cone(0.35, 0.8, 4, 0, h + 1.2, 0, 'stone')]; }
+    parts.push(tint(new THREE.BoxGeometry(1.6, 0.25, 3.2).translate(0, 0.25, 1.9), 'moss'));
+    for (const p of parts) S.push(place(p.rotateZ(tilt * 0.4).rotateX(tilt), gx, gy, gz, gry));
+    k++;
+  }
+  keepClear.push({ x, z, r: 60 });
+}
+
+// ---------- a rotten jetty on the murky pond ----------
+{
+  const a = Math.atan2(MANOR.z - POND.z, MANOR.x - POND.x), sx = POND.x + Math.cos(a) * 36, sz = POND.z + Math.sin(a) * 36, ry = Math.atan2(POND.x - sx, POND.z - sz);
+  for (let i = 0; i < 9; i++) { if (i === 6) continue; S.push(place(tint(new THREE.BoxGeometry(4.4, 0.3, 1.1).rotateZ((rnd() - 0.5) * 0.12).translate(0, 0, i * 1.25), 'wood'), sx, 1.1, sz, ry)); }   // one plank missing
+  for (const s of [-1, 1]) for (let i = 0; i < 4; i++) { const p = toWorld(s * 2, 0, i * 3.4, sx, 0, sz, ry); S.push(cyl(0.22, 0.25, 4.5, 5, p.x, -1, p.z, 'woodDark')); }
+  const bt = toWorld(3, 0, 12, sx, 0, sz, ry);   // a half-sunk rowing boat
+  S.push(place(tint(new THREE.BoxGeometry(2.4, 1.0, 5.5).rotateZ(0.25).rotateX(0.12), 'woodDark'), bt.x, 0.1, bt.z, ry + 0.8));
+}
+
+// ---------- gnarled, leafless trees ----------
+function treeGeo(seed, depth) {
+  const rng = makeRng(seed), parts = [], q = new THREE.Quaternion();
+  const seg = (a, b, r0, r1) => { const d = b.clone().sub(a), len = d.length(), g = new THREE.CylinderGeometry(r1, r0, len, 5, 1); q.setFromUnitVectors(UP, d.normalize()); g.applyQuaternion(q); const m = a.clone().add(b).multiplyScalar(0.5); g.translate(m.x, m.y, m.z); parts.push(tint(g, rng() < 0.5 ? 'bark' : 'bark2')); };
+  const branch = (p, dir, len, r, lvl) => {
+    let c = p.clone(), d = dir.clone(), rr = r;
+    for (let k = 0; k < 3; k++) { d.add(new THREE.Vector3((rng() - 0.5) * 0.8, (rng() - 0.5) * 0.35, (rng() - 0.5) * 0.8)).normalize(); const nx = c.clone().addScaledVector(d, len / 3); seg(c, nx, rr, rr * 0.86); c = nx; rr *= 0.86; }
+    if (lvl <= 0) return;
+    const n = 2 + (rng() < 0.55 ? 1 : 0);
+    for (let i = 0; i < n; i++) { const nd = d.clone().add(new THREE.Vector3((rng() - 0.5) * 1.8, (rng() - 0.3) * 1.0, (rng() - 0.5) * 1.8)).normalize(); if (lvl <= 1) nd.y -= 0.3 * rng(); branch(c, nd.normalize(), len * (0.58 + rng() * 0.22), rr * 0.72, lvl - 1); }
+  };
+  branch(new THREE.Vector3(0, -0.05, 0), new THREE.Vector3((rng() - 0.5) * 0.3, 1, (rng() - 0.5) * 0.3).normalize(), 0.42, 0.055, depth);
+  for (let i = 0; i < 4; i++) { const a = i / 4 * 6.28 + rng(), dd = new THREE.Vector3(Math.cos(a), -0.35, Math.sin(a)).normalize(); seg(new THREE.Vector3(0, 0.05, 0), dd.multiplyScalar(0.12).add(new THREE.Vector3(0, 0.02, 0)), 0.035, 0.012); }
+  return mergeGeometries(parts);
+}
+{
+  const fine = [11, 22, 33, 44].map((s) => new THREE.InstancedMesh(treeGeo(s, 4), DUAL, 60)), coarse = [55, 66, 77].map((s) => new THREE.InstancedMesh(treeGeo(s, 3), DUAL, 700));
+  for (const m of [...fine, ...coarse]) { m.count = 0; scene.add(m); }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3();
+  const add = (set, x, z, ht) => { const m = set[(rnd() * set.length) | 0]; if (m.count >= m.instanceMatrix.count) return; m.setMatrixAt(m.count++, m4.compose(v.set(x, groundAt(x, z) - 0.3, z), q.setFromEuler(e.set((rnd() - 0.5) * 0.12, rnd() * 6.28, (rnd() - 0.5) * 0.12)), s.set(ht * (0.9 + rnd() * 0.3), ht, ht * (0.9 + rnd() * 0.3)))); };
+  const inside = (x, z, pad = 0) => x > FENCE.x0 + pad && x < FENCE.x1 - pad && z > FENCE.z0 + pad && z < FENCE.z1 - pad;
+  for (let z = FOUNT.z + 45; z < FENCE.z1 - 10; z += 26) for (const sx of [-1, 1]) add(fine, sx * 16, z + (rnd() - 0.5) * 4, 22 + rnd() * 6);   // an avenue along the drive
+  for (let i = 0, n = 0; i < 6000 && n < 70; i++) {
+    const x = FENCE.x0 + 10 + rnd() * (FENCE.x1 - FENCE.x0 - 20), z = FENCE.z0 + 10 + rnd() * (FENCE.z1 - FENCE.z0 - 20);
+    if (keepClear.some((k) => Math.hypot(k.x - x, k.z - z) < k.r) || Math.abs(x) < 22 && z > FOUNT.z || height(x, z) < 1.5) continue;
+    add(fine, x, z, 18 + rnd() * 14); n++;
+  }
+  for (let i = 0; i < 60000; i++) {
+    const x = (rnd() - 0.5) * 2400, z = (rnd() - 0.5) * 2400, h = height(x, z);
+    if (inside(x, z, -12) || h < 1.5 || W.slopeAt(x, z, 3) > 0.7 || fbm(x * 0.005 + 3, z * 0.005, 3) < -0.15) continue;
+    if (Math.abs(x) < 14 && z > FENCE.z1) continue;
+    add(coarse, x, z, 16 + rnd() * 16);
+  }
+  for (const m of [...fine, ...coarse]) m.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- creatures: crows by day, bats round the turret by night, a ghost by the crypt ----------
+W.birds({ n: 14, radius: 260, y: 150, speed: 0.03, color: mix(L.text, L.base, 0.1) });
+{
+  const NB = 34, pos = new Float32Array(NB * 8 * 3), g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const bats = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: P.crust, transparent: true, opacity: 0 })); bats.frustumCulled = false; scene.add(bats);
+  const info = Array.from({ length: NB }, () => ({ r: 14 + rnd() * 45, h: (rnd() - 0.5) * 30, w: (0.35 + rnd() * 0.5) * (rnd() < 0.8 ? 1 : -1), ph: rnd() * 6.28, f: 14 + rnd() * 6 }));
+  animators.push((t, night) => {
+    const o = smooth(0.45, 0.85, night); bats.material.opacity = 0.95 * o; if (o <= 0) return;
+    const c = MANOR.tower;
+    for (let i = 0; i < NB; i++) {
+      const b = info[i], a = b.ph + t * b.w, x = c.x + Math.cos(a) * b.r + Math.sin(t * 0.7 + i) * 4, y = c.y + b.h + Math.sin(t * 1.3 + i) * 5, z = c.z + Math.sin(a) * b.r;
+      const fx = -Math.sin(a) * Math.sign(b.w), fz = Math.cos(a) * Math.sign(b.w), rx = -fz, rz = fx, fl = Math.sin(t * b.f + i), s = 1.6;
+      const pts = [[x + rx * s * 1.8, y + fl * 1.2, z + rz * s * 1.8], [x + rx * s * 0.9, y + fl * 0.4 + 0.3, z + rz * s * 0.9], [x + rx * s * 0.9, y + fl * 0.4 + 0.3, z + rz * s * 0.9], [x, y, z],
+        [x, y, z], [x - rx * s * 0.9, y + fl * 0.4 + 0.3, z - rz * s * 0.9], [x - rx * s * 0.9, y + fl * 0.4 + 0.3, z - rz * s * 0.9], [x - rx * s * 1.8, y + fl * 1.2, z - rz * s * 1.8]];
+      pts.forEach((p, k) => pos.set(p, (i * 8 + k) * 3));
+    }
+    g.attributes.position.needsUpdate = true;
+  });
+  // a ghost wandering between the graves
+  const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, color: mix(P.teal, P.text, 0.5), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  ghost.scale.set(5, 8, 1); scene.add(ghost);
+  const gh2 = new THREE.Sprite(ghost.material); gh2.scale.set(2.6, 2.6, 1); scene.add(gh2);
+  animators.push((t, night) => {
+    const a = t * 0.05, r = 28 + 10 * Math.sin(t * 0.13), x = CRYPT.x + Math.cos(a) * r, z = CRYPT.z + Math.sin(a) * r, y = groundAt(x, z) + 4.5 + Math.sin(t * 0.9) * 0.8;
+    ghost.position.set(x, y, z); gh2.position.set(x, y + 3.6, z);
+    ghost.material.opacity = smooth(0.55, 0.95, night) * (0.32 + 0.18 * Math.sin(t * 0.7)) * (0.6 + 0.4 * Math.sin(t * 0.21));
+  });
+  W.fireflies([{ x: POND.x, z: POND.z, r: 40 }, { x: CRYPT.x, z: CRYPT.z, r: 50 }, { x: -120, z: -120, r: 40 }], 9);   // will-o'-wisps
+}
+
+// ---------- weather: ground fog, a low cloud ceiling, rain and lightning at night ----------
+const MISTS = [];
+for (let i = 0, k = 0; i < 4000 && k < 110; i++) {
+  const a = rnd() * 6.28, r = rnd() * 900, x = Math.cos(a) * r, z = Math.sin(a) * r;
+  const o = 0.08 + rnd() * 0.08; MISTS.push({ sp: W.drifter('mist', o, 120 + rnd() * 160, 22 + rnd() * 20, x, Math.max(height(x, z), 0) + 6 + rnd() * 10, z, 0.003 + rnd() * 0.004, 0.95 + rnd() * 0.1), o }); k++;
+}
+for (let i = 0; i < 70; i++) {
+  const a = rnd() * 6.28, r = rnd() * 1500;
+  W.drifter('cloud', 0.28 + rnd() * 0.25, 500 + rnd() * 400, 120 + rnd() * 80, Math.cos(a) * r, 320 + rnd() * 160, Math.sin(a) * r, 0.006 + rnd() * 0.006, 0.8 + rnd() * 0.3);
+}
+{
+  // rain streaks round the camera, slanted by the wind
+  const N = 2600, BOX = 260, pos = new Float32Array(N * 6), seeds = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const x = (rnd() - 0.5) * BOX, y = (rnd() - 0.5) * BOX * 0.7, z = (rnd() - 0.5) * BOX; pos.set([x, y, z, x, y, z], i * 6); seeds[i] = 0.8 + rnd() * 0.4; }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const rain = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: mix(P.lav, P.text, 0.4), transparent: true, opacity: 0, depthWrite: false })); rain.frustumCulled = false; scene.add(rain);
+  const wind = new THREE.Vector3(14, -110, 6);
+  animators.push((t, night, dt) => {
+    const storm = cur.storm; rain.material.opacity = 0.18 * smooth(0.25, 0.8, storm); if (storm < 0.05) return;
+    const cp = W.camera.position, hb = BOX / 2, vb = BOX * 0.35;
+    for (let i = 0; i < N; i++) {
+      const o = i * 6, s = seeds[i];
+      let x = pos[o] + wind.x * s * dt, y = pos[o + 1] + wind.y * s * dt, z = pos[o + 2] + wind.z * s * dt;
+      if (x - cp.x > hb) x -= BOX; else if (x - cp.x < -hb) x += BOX;
+      if (z - cp.z > hb) z -= BOX; else if (z - cp.z < -hb) z += BOX;
+      if (y - cp.y < -vb) y += vb * 2; else if (y - cp.y > vb) y -= vb * 2;
+      pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; pos[o + 3] = x - wind.x * 0.022; pos[o + 4] = y - wind.y * 0.022; pos[o + 5] = z - wind.z * 0.022;
+    }
+    g.attributes.position.needsUpdate = true;
+  });
+  // lightning: a jagged bolt with forks, a flash that lights sky, fog, clouds and ground, flickering twice or thrice
+  const MAXV = 400, bpos = new Float32Array(MAXV * 3), bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(bpos, 3)); bg.setDrawRange(0, 0);
+  const boltMat = new THREE.LineBasicMaterial({ color: new THREE.Color(3, 3, 3.4), transparent: true, opacity: 0, fog: false, depthWrite: false, blending: THREE.AdditiveBlending });
+  const bolt = new THREE.LineSegments(bg, boltMat); bolt.frustumCulled = false; scene.add(bolt);
+  const flashLight = new THREE.DirectionalLight(mix(P.lav, P.text, 0.5), 0); scene.add(flashLight);
+  let next = 4, age = 99, pulses = [], nv = 0;
+  const flashC = mix(P.lav, P.text, 0.35);
+  function strike() {
+    // mostly strike somewhere in front of the camera so the bolt is seen, not just its flash
+    const cp = W.camera.position, fw = W.camera.getWorldDirection(new THREE.Vector3()), a = Math.atan2(fw.z, fw.x) + (Math.random() - 0.5) * (Math.random() < 0.75 ? 1.2 : 6.28), r = 350 + Math.random() * 900, bx = cp.x + Math.cos(a) * r, bz = cp.z + Math.sin(a) * r;
+    nv = 0;
+    const fork = (x, y, z, yEnd, step, lvl) => {
+      while (y > yEnd && nv < MAXV - 2) {
+        const nx = x + (Math.random() - 0.5) * step * 0.9, ny = y - step * (0.6 + Math.random() * 0.5), nz = z + (Math.random() - 0.5) * step * 0.9;
+        bpos.set([x, y, z, nx, ny, nz], nv * 3); nv += 2; x = nx; y = ny; z = nz;
+        if (lvl < 2 && Math.random() < 0.12) fork(x, y, z, y - 60 - Math.random() * 120, step * 0.7, lvl + 1);
+      }
+    };
+    fork(bx, 620, bz, Math.max(0, height(bx, bz)), 26, 0);
+    bg.setDrawRange(0, nv); bg.attributes.position.needsUpdate = true;
+    flashLight.position.set(bx - cp.x, 600, bz - cp.z).normalize().multiplyScalar(1000).add(cp); flashLight.target.position.copy(cp);
+    age = 0; pulses = [[0, 1], [0.12 + Math.random() * 0.08, 0.6 + Math.random() * 0.4]]; if (Math.random() < 0.5) pulses.push([0.35 + Math.random() * 0.2, 0.4 + Math.random() * 0.4]);
+  }
+  animators.push((t, night, dt) => {
+    const storm = cur.storm;
+    next -= dt; if (next < 0) { if (storm > 0.5) strike(); next = (5 + Math.random() * 12) / Math.max(0.3, storm); }
+    age += dt; let b = 0; for (const [t0, s] of pulses) { const k = age - t0; if (k >= 0) b += s * Math.exp(-k * 16); }
+    b *= storm;
+    boltMat.opacity = Math.min(1, b * 1.5);
+    flashLight.intensity = 3.2 * b; flashLight.target.updateMatrixWorld();
+    if (b > 0.002) {
+      for (const k of ['hor', 'mid', 'top', 'cloud', 'mist']) cur[k].lerp(flashC, Math.min(0.8, b * (k === 'top' ? 0.45 : 0.65)));
+      scene.fog.color.copy(cur.hor);
+      W.hemi.intensity += 1.6 * b;
+    }
+  });
+}
+
+// ---------- day/night switch for the dual colours, softer windows ----------
+{
+  const winDay = mix(L.o1, L.sapph, 0.15), winNight = mix(P.yellow, P.peach, 0.4).multiplyScalar(0.9), dimDay = mix(L.o1, L.lav, 0.15), dimNight = mix(P.peach, P.maroon, 0.35).multiplyScalar(0.7);
+  const gDay = mix(L.s0, L.base, 0.3), gNight = mix(P.s0, P.base, 0.5);
+  animators.push((t, night) => {
+    NM.value = smooth(0.12, 0.85, night);
+    W.hemi.groundColor.copy(gDay).lerp(gNight, night);
+    W.winMat.color.copy(winDay).lerp(winNight, night); W.winMatDim.color.copy(dimDay).lerp(dimNight, night);
+    for (const f of FACE_MATS) f.m.color.copy(P.peach).multiplyScalar((0.5 + 0.8 * night) * flick(t, f.s));
+  });
+}
+
+// ---------- the day's ground fog: drifting white sheets hugging the ground up to the height of the tree trunks ----------
+// Six terrain-shaped layers stacked a metre and a half apart; each is noise-thinned and slowly drifting, and fades
+// out close to the camera so it never shows as a flat sheet. The night's rain clears it away (key `gfog`).
+const GF = { value: 1 }, GT = { value: 0 }, FOGC = new THREE.Color();
+{
+  const SIZE = 1500, SEG = 150, base = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG).rotateX(-Math.PI / 2), bp = base.attributes.position;
+  const ground = new Float32Array(bp.count); for (let i = 0; i < bp.count; i++) ground[i] = Math.max(height(bp.getX(i), bp.getZ(i)), 0.3);
+  const layers = [[1.0, 0.24], [2.6, 0.22], [4.2, 0.19], [5.8, 0.15], [7.4, 0.11], [9.0, 0.07]];
+  layers.forEach(([off, alpha], li) => {
+    const g = base.clone(), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setY(i, ground[i] + off);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, fog: true, side: THREE.DoubleSide,
+      uniforms: { col: { value: FOGC }, dens: GF, time: GT, alpha: { value: alpha }, seed: { value: li * 7.3 }, camPos: { value: W.camera.position }, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+      vertexShader: `varying vec3 vWorld;
+        #include <common>
+        #include <fog_pars_vertex>
+        void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; vec4 mvPosition = viewMatrix * w; gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
+        }`,
+      fragmentShader: `uniform vec3 col, camPos; uniform float dens, time, alpha, seed; varying vec3 vWorld;
+        #include <common>
+        #include <fog_pars_fragment>
+        float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+        void main(){
+          vec2 p = vWorld.xz * 0.018 + vec2(seed, seed * 0.6);
+          float n = 0.55 * vn(p + time * vec2(0.035, 0.012)) + 0.3 * vn(p * 2.3 - time * vec2(0.02, 0.05)) + 0.15 * vn(p * 5.1 + time * 0.07);
+          float a = dens * alpha * smoothstep(0.18, 0.75, n) * 1.6;
+          a *= smoothstep(5.0, 45.0, distance(camPos, vWorld));
+          if (a < 0.003) discard;
+          gl_FragColor = vec4(col, a);
+          #include <colorspace_fragment>
+          #include <fog_fragment>
+        }`,
+    });
+    const m = new THREE.Mesh(g, mat); m.renderOrder = 2 + li; m.frustumCulled = false; scene.add(m);
+    animators.push(() => { m.visible = GF.value > 0.01; });
+  });
+}
+
+// ---------- the night's rain: puddles fill on paths and hollows, rain rings dance on them, everything looks wet ----------
+const WET = { value: 0 };
+{
+  const spots = [];
+  for (let z = WALL_FRONT + 8; z < FENCE.z1 + 30; z += 9 + rnd() * 14) spots.push([(rnd() - 0.5) * 6, z, 1.8 + rnd() * 2.2]);
+  for (let i = 0; i < 10; i++) spots.push([(rnd() - 0.5) * 46, 6 + rnd() * (TER_Z - 8), 1.2 + rnd() * 1.6]);
+  for (let i = 0; i < 8; i++) { const a = rnd() * 6.28; spots.push([FOUNT.x + Math.cos(a) * 25, FOUNT.z + Math.sin(a) * 25, 1.5 + rnd() * 2]); }
+  for (let i = 0; i < CRYPT_PATH.length - 1; i++) if (rnd() < 0.8) { const [ax, az] = CRYPT_PATH[i], [bx, bz] = CRYPT_PATH[i + 1], u = rnd(); spots.push([ax + (bx - ax) * u, az + (bz - az) * u, 1 + rnd()]); }
+  for (let i = 0, k = 0; i < 3000 && k < 22; i++) {                     // hollows in the lawn and the moor
+    const x = (rnd() - 0.5) * 500, z = (rnd() - 0.5) * 500, h = height(x, z);
+    if (h < 1.5 || W.slopeAt(x, z) > 0.06 || keepClear.some((c) => Math.hypot(c.x - x, c.z - z) < c.r * 0.6)) continue;
+    spots.push([x, z, 2.5 + rnd() * 5]); k++;
+  }
+  const geos = [];
+  for (const [x, z, r] of spots) {
+    const n = 18, pos = [], edge = [], rr = []; for (let i = 0; i < n; i++) rr.push(r * (0.7 + 0.45 * rnd()));
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, r0 = rr[i], r1 = rr[(i + 1) % n];
+      const p0 = [x + Math.cos(a0) * r0 * 1.3, z + Math.sin(a0) * r0], p1 = [x + Math.cos(a1) * r1 * 1.3, z + Math.sin(a1) * r1];
+      for (const [px, pz, e] of [[x, z, 0], [p1[0], p1[1], 1], [p0[0], p0[1], 1]]) { pos.push(px, groundAt(px, pz) + 0.24, pz); edge.push(e); }
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('edge', new THREE.Float32BufferAttribute(edge, 1)); geos.push(g);
+  }
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, fog: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    uniforms: { wet: WET, time: GT, sky: { value: cur.hor }, deep: { value: mix(P.crust, P.s0, 0.4) }, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+    vertexShader: `attribute float edge; varying float vEdge; varying vec3 vWorld;
+      #include <common>
+      #include <fog_pars_vertex>
+      void main(){ vEdge = edge; vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; vec4 mvPosition = viewMatrix * w; gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `uniform float wet, time; uniform vec3 sky, deep; varying float vEdge; varying vec3 vWorld;
+      #include <common>
+      #include <fog_pars_fragment>
+      float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      void main(){
+        if (vEdge > wet * 1.05) discard;                                   // puddles grow from the middle as the rain goes on
+        vec3 V = normalize(cameraPosition - vWorld);
+        float fres = 0.35 + 0.65 * pow(1.0 - max(V.y, 0.0), 2.5);
+        vec3 skyB = mix(sky, vec3(0.72, 0.75, 0.98), 0.15) * 0.42;          // the cloud ceiling, faintly lit, mirrored
+        vec3 c = mix(deep, skyB, fres);
+        float rings = 0.0;
+        for (int k = 0; k < 2; k++) {
+          vec2 q = vWorld.xz * (1.1 + float(k) * 0.4) + float(k) * 3.7, cell = floor(q), f = fract(q) - 0.5;
+          float ph = fract(time * 0.85 + h21(cell + float(k))), rad = ph * 0.48;
+          vec2 o = (vec2(h21(cell + 1.3), h21(cell + 7.1)) - 0.5) * 0.5;
+          rings += smoothstep(0.035, 0.0, abs(length(f - o) - rad)) * (1.0 - ph);
+        }
+        c += skyB * rings * 0.6;
+        gl_FragColor = vec4(c, 0.85 * smoothstep(wet * 1.05, wet * 0.75, vEdge));
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }`,
+  });
+  const puddles = new THREE.Mesh(mergeGeometries(geos), mat); puddles.renderOrder = 1; puddles.frustumCulled = false; scene.add(puddles);
+}
+{
+  let first = true;
+  animators.push((t, night, dt) => {
+    GT.value = t;
+    const storm = cur.storm;
+    GF.value = cur.gfog; FOGC.copy(cur.mist).lerp(L.base, 0.6 * (1 - night));
+    for (const m of MISTS) m.sp.material.opacity = m.o * (0.15 + 0.85 * cur.gfog);
+    if (first) { WET.value = smooth(0.4, 0.9, storm); first = false; }
+    WET.value = Math.min(1, Math.max(0, WET.value + (storm > 0.5 ? dt / 80 : -dt / 200)));
+    const dry = 1 - 0.32 * WET.value; ROADMAT.color.setScalar(dry); DUAL.color.setScalar(1 - 0.14 * WET.value);   // wet gravel and stone go darker
+  });
+}
+
+scene.add(new THREE.Mesh(mergeGeometries(S), DUAL));
+scene.add(new THREE.Mesh(mergeGeometries(RD), ROADMAT));
+W.finish();
+</script>
+</body></html>
