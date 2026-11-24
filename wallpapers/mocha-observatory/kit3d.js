@@ -4,7 +4,7 @@
 //
 // URL options understood by every scene:
 //   ?speed=1  ?t=0 (start offset s)  ?day=60 (minutes per day)  ?tod=0.68 (0 midnight .25 sunrise .5 noon .75 sunset)
-//   ?fps=60  ?bloom=1  ?hd=0
+//   ?fps=60  ?bloom=1  ?hd=0  ?cam=x,y,z,lookX,lookY,lookZ (debug: fixed camera)
 import * as THREE from 'three';
 import { Reflector } from './lib/Reflector.js';
 import { mergeGeometries } from './lib/BufferGeometryUtils.js';
@@ -67,9 +67,18 @@ export function createWorld(cfg) {
   const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
   const SPEED = num('speed', 1), T0 = num('t', 0), DAY = num('day', 60), TOD0 = num('tod', cfg.tod ?? 0.68), FPS = num('fps', 60);
   const BLOOM = num('bloom', 1) > 0, HD = num('hd', 0) > 0;
+  const CAM = Q.has('cam') ? Q.get('cam').split(',').map(Number) : null;     // debug: fixed camera x,y,z,lookX,lookY,lookZ
   const rnd = makeRng(cfg.seed ?? 1234567);
   const height = cfg.height;
   const slopeAt = (x, z, d = 4) => (Math.abs(height(x + d, z) - height(x - d, z)) + Math.abs(height(x, z + d) - height(x, z - d))) / (2 * d);
+  // height of the rendered (flat-shaded, triangulated) terrain mesh, which differs from height() between vertices
+  const TS = cfg.terrain.size ?? 3800, TC = TS / (cfg.terrain.seg ?? 360);
+  function groundAt(x, z) {
+    const gx = (x + TS / 2) / TC, gz = (z + TS / 2) / TC, ix = Math.floor(gx), iz = Math.floor(gz), u = gx - ix, v = gz - iz;
+    const X = ix * TC - TS / 2, Z = iz * TC - TS / 2;
+    const ha = height(X, Z), hb = height(X, Z + TC), hc = height(X + TC, Z + TC), hd = height(X + TC, Z);
+    return u + v <= 1 ? ha + u * (hd - ha) + v * (hb - ha) : hc + (1 - u) * (hb - hc) + (1 - v) * (hd - hc);   // PlaneGeometry splits cells along a-b-d / b-c-d
+  }
 
   // time of day: keyframes by sun elevation, interpolated into `cur`
   const KEYS = cfg.keys, cur = {};
@@ -523,7 +532,9 @@ export function createWorld(cfg) {
         if (w > 0.001) { focus.addScaledVector(sg, w); wsum += w; pull += w * (sg.pull ?? 0.55); }
       }
       if (wsum > 0.001) look.lerp(focus.divideScalar(wsum), (pull / wsum) * Math.min(1, wsum));
-      camera.up.set(0, 1, 0); camera.lookAt(look); camera.rotateZ(0.06 + 0.025 * Math.sin(t * 0.02));
+      camera.up.set(0, 1, 0);
+      if (CAM) { camera.position.set(CAM[0], CAM[1], CAM[2]); camera.lookAt(CAM[3], CAM[4], CAM[5]); }
+      else { camera.lookAt(look); camera.rotateZ(0.06 + 0.025 * Math.sin(t * 0.02)); }
 
       for (const sp of drifters) {
         const u = sp.userData; u.a += u.drift * dt * 0.3;
@@ -561,7 +572,7 @@ export function createWorld(cfg) {
   }
 
   return {
-    THREE, P, L, mix, smooth, noise, fbm, ridged, rnd, height, slopeAt, cur, sunDir, moonDir, scene, camera, renderer, soft, moonLight, hemi,
+    THREE, P, L, mix, smooth, noise, fbm, ridged, rnd, height, groundAt, slopeAt, cur, sunDir, moonDir, scene, camera, renderer, soft, moonLight, hemi,
     winMat, winMatDim, glowMat, keepClear, smokeSources, lampLights, animators, SIGHTS, wakeSources, SOLID, GLOW, DIM,
     findSpot, tinted, plain, gable, place, toWorld, groundRange, groundMin, addLight, house, drifter, particles, fireflies, birds,
     mergeGeometries, finish,
