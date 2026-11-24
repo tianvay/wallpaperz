@@ -204,11 +204,24 @@ class TrayApp : ApplicationContext
         return k?.GetValue("MochaWallpaper") is string;
     }
 
+    // Newer Windows 11 builds only launch Run entries that are also marked enabled in
+    // StartupApproved (the Settings > Apps > Startup list); without that mark they are skipped silently.
+    const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
     void ToggleAutostart()
     {
         using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (IsAutostart()) k.DeleteValue("MochaWallpaper", false);
-        else k.SetValue("MochaWallpaper", $"\"{Environment.ProcessPath}\"");
+        using var a = Registry.CurrentUser.CreateSubKey(ApprovedKey);
+        if (IsAutostart())
+        {
+            k.DeleteValue("MochaWallpaper", false);
+            a.DeleteValue("MochaWallpaper", false);
+        }
+        else
+        {
+            k.SetValue("MochaWallpaper", $"\"{Environment.ProcessPath}\"");
+            a.SetValue("MochaWallpaper", new byte[] { 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, RegistryValueKind.Binary);
+        }
         autostartItem.Checked = IsAutostart();
     }
 
