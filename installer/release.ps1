@@ -10,8 +10,9 @@ $version = ([xml](Get-Content (Join-Path $root 'source\MochaWallpaper.csproj')))
 if (-not $version) { throw 'No <Version> in MochaWallpaper.csproj' }
 $tag = "v$version"
 
-gh release view $tag 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) { throw "Release $tag exists already: bump <Version> in source\MochaWallpaper.csproj first." }
+$existing = gh release list --limit 1000 --json tagName --jq '.[].tagName'
+if ($LASTEXITCODE) { throw 'gh release list failed: is the GitHub CLI installed and logged in?' }
+if ($existing -contains $tag) { throw "Release $tag exists already: bump <Version> in source\MochaWallpaper.csproj first." }
 if (git -C $root status --porcelain) { throw 'Uncommitted changes: commit and push them first, so the release matches main.' }
 
 & (Join-Path $here 'build.ps1')
