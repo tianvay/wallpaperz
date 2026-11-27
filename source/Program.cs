@@ -8,9 +8,18 @@ namespace MochaWallpaper;
 
 static class Program
 {
+    // Signalled by "MochaWallpaper.exe --exit" (the installer/uninstaller): the running instance quits cleanly
+    // and restores the static wallpaper, which a plain process kill would leave black.
+    public const string ExitEventName = "MochaWallpaper.Exit";
+
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Any(a => a.Equals("--exit", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (EventWaitHandle.TryOpenExisting(ExitEventName, out var ev)) using (ev) ev.Set();
+            return;
+        }
         using var mutex = new Mutex(true, "MochaWallpaper.SingleInstance", out bool first);
         if (!first) return;
         ApplicationConfiguration.Initialize();

@@ -79,6 +79,15 @@ class TrayApp : ApplicationContext
         watchdog.Start();
         FillWallpaperMenu();
         Rebuild();
+        ListenForExit();
+    }
+
+    readonly EventWaitHandle exitSignal = new(false, EventResetMode.AutoReset, Program.ExitEventName);
+
+    void ListenForExit()
+    {
+        var ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        new Thread(() => { exitSignal.WaitOne(); ui.Post(_ => ExitApp(), null); }) { IsBackground = true }.Start();
     }
 
     static Icon MakeIcon()

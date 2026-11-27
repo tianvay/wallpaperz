@@ -14,3 +14,7 @@ wallpapers/_test/
 
 # brainstorming notes
 ideas.md
+
+# installer build output (installer/build.ps1)
+installer/staging/
+dist/
