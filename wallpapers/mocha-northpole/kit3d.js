@@ -62,6 +62,7 @@ export function makeRng(seed) {
 // ---------- wall clock ----------
 // Everything else runs on seconds since the page loaded; scenes that tell the real time read wallClock() instead.
 // Returns { h, m, s, hour, min } with s fractional, hour = h + m/60 + s/3600 and min = m + s/60.
+// Inside a world, read W.clock instead: { c: wallClock() of this frame, struck: true on the frame the hour changes }.
 const CLOCK_Q = new URLSearchParams(location.search), CLOCK_LOAD = Date.now(), CLOCK_RATE = CLOCK_Q.has('clockrate') ? parseFloat(CLOCK_Q.get('clockrate')) : 1;
 let CLOCK_START = CLOCK_LOAD;
 if (CLOCK_Q.has('clock')) { const [h, m = 0, s = 0] = CLOCK_Q.get('clock').split(':').map(Number); const d = new Date(CLOCK_LOAD); d.setHours(h, m, s, 0); CLOCK_START = d.getTime(); }
@@ -574,6 +575,7 @@ export function createWorld(cfg) {
         meteor.material.opacity = Math.sin(Math.PI * mu.age / mu.life) * cur.stars;
       } else meteor.material.opacity = 0;
 
+      clock.c = wallClock(); clock.struck = clock.c.h !== clockH; clockH = clock.c.h;   // never struck on page load
       for (const f of animators) f(t, night, dt, e);
       if (water) water.material.uniforms.time.value = t;
       if (composer) { finalPass.uniforms.time.value = t % 100; composer.render(); } else renderer.render(scene, camera);
@@ -585,8 +587,10 @@ export function createWorld(cfg) {
     });
   }
 
+  const clock = { c: wallClock(), struck: false }; let clockH = clock.c.h;
+
   return {
-    THREE, P, L, mix, smooth, noise, fbm, ridged, rnd, height, groundAt, slopeAt, cur, sunDir, moonDir, scene, camera, renderer, soft, moonLight, hemi,
+    clock, THREE, P, L, mix, smooth, noise, fbm, ridged, rnd, height, groundAt, slopeAt, cur, sunDir, moonDir, scene, camera, renderer, soft, moonLight, hemi,
     winMat, winMatDim, glowMat, keepClear, smokeSources, lampLights, animators, SIGHTS, wakeSources, SOLID, GLOW, DIM,
     findSpot, tinted, plain, gable, place, toWorld, groundRange, groundMin, addLight, house, drifter, particles, fireflies, birds,
     mergeGeometries, finish,

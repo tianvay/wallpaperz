@@ -12,6 +12,9 @@
 // gingerbread house, igloos, snowmen, the reindeer paddock (one calf is practising to fly), polar bears on the sea
 // ice, and the sleigh looping overhead with magic sparkling from the reindeers' hooves.
 // Every object carries two colours: Catppuccin Latte by day, Catppuccin Mocha by night. URL options: see kit3d.js.
+// It tells the real time: besides the tower clock (now with a seconds hand), the toy train runs one lap a minute and
+// passes the workshop side of the square on the full minute, and on the hour fireworks burst over the square, one per
+// hour (1-12), while the star on the clock tower spins and flares.
 import { createWorld, THREE, mergeGeometries, P, L, mix, smooth, fbm, ridged } from './kit3d.js';
 
 const sq = (v) => v * v;
@@ -306,8 +309,9 @@ for (let i = 0; i < 34; i++) { const a = i / 34 * Math.PI * 2 + 0.05, r = RING(a
   const puffs = [];
   for (let i = 0; i < 8; i++) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: W.soft, transparent: true, opacity: 0, depthWrite: false })); scene.add(sp); puffs.push({ sp, k: i / 8, x: 0, y: 0, z: 0 }); }
   let lastK = 0;
+  // one lap a minute, like a seconds hand: on the full minute the engine passes the workshop side of the square (-z)
   animators.push((t, night) => {
-    const phi = t * 0.1;
+    const phi = -Math.PI / 2 + W.clock.c.s / 60 * Math.PI * 2;
     cars.forEach((g, i) => { const a = phi - i * 0.105; g.position.set(Math.cos(a) * R, G0 + 0.4, Math.sin(a) * R); g.rotation.y = -a; });
     const cp = new THREE.Vector3(0, 4.9, 2.2).applyAxisAngle(Y, -phi).add(cars[0].position);
     for (const p of puffs) {
@@ -398,10 +402,19 @@ const WS = { cx: 0, cz: -125 };
   for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; S.push(tint(new THREE.BoxGeometry(0.35, 0.8, 0.1).rotateZ(-a).translate(cx + Math.sin(a) * 4.2, fy + Math.cos(a) * 4.2, fz + 0.05), 'dark')); }
   const handMat = new THREE.MeshBasicMaterial({ color: pal.dark[0].clone() });
   const hourH = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2.8, 0.15).translate(0, 1.2, 0), handMat), minH = new THREE.Mesh(new THREE.BoxGeometry(0.4, 4.1, 0.15).translate(0, 1.8, 0), handMat);
-  for (const h of [hourH, minH]) { h.position.set(cx, fy, fz + 0.15); scene.add(h); }
-  animators.push(() => { const d = new Date(), m = d.getMinutes() + d.getSeconds() / 60, h = (d.getHours() % 12) + m / 60; minH.rotation.z = -m / 60 * Math.PI * 2; hourH.rotation.z = -h / 12 * Math.PI * 2; });
-  const towerStar = new THREE.Mesh(starGeo(2.2, 0.9, 0.6), glowMat(P.yellow, 0.9, 1.6)); towerStar.position.set(cx, base + tH + 20.5, tcz); scene.add(towerStar);
-  animators.push((t) => { towerStar.rotation.y = -t * 0.25; });
+  const secH = new THREE.Mesh(new THREE.BoxGeometry(0.16, 4.6, 0.1).translate(0, 1.6, 0), new THREE.MeshBasicMaterial({ color: pal.red[0].clone() }));
+  for (const h of [hourH, minH, secH]) { h.position.set(cx, fy, fz + 0.15); scene.add(h); }
+  secH.position.z += 0.1;
+  animators.push(() => { const c = W.clock.c; secH.rotation.z = -Math.floor(c.s) / 60 * Math.PI * 2; minH.rotation.z = -c.min / 60 * Math.PI * 2; hourH.rotation.z = -(c.hour % 12) / 12 * Math.PI * 2; });
+  // the tower star: turns slowly, and on the hour spins up and flares while the fireworks go off
+  const starMat = glowMat(P.yellow, 0.9, 1.6), towerStar = new THREE.Mesh(starGeo(2.2, 0.9, 0.6), starMat); towerStar.position.set(cx, base + tH + 20.5, tcz); scene.add(towerStar);
+  let starA = 0, flare = 0;
+  animators.push((t, night, dt) => {
+    if (W.clock.struck) flare = 4 + 1.5 * (W.clock.c.h % 12 || 12);
+    flare = Math.max(0, flare - dt); const f = smooth(0, 2, flare);
+    starA -= dt * (0.25 + 6 * f); towerStar.rotation.y = starA; towerStar.scale.setScalar(1 + 0.6 * f);
+    if (f > 0) starMat.color.multiplyScalar(1 + 1.5 * f);           // glowMat sets the colour every frame before animators run
+  });
   // icicles along the front eave, garlands under it
   for (let x = -w / 2 - 1; x <= w / 2 + 1; x += 1.4) { if (Math.abs(x) < tw / 2 + 0.5) continue; const len = 0.6 + rnd() * 1.8; S.push(tint(new THREE.ConeGeometry(0.2, len, 5).rotateX(Math.PI).translate(cx + x, base + H - len / 2, front + 1.4), 'ice')); }
   for (const [x0, x1] of [[-w / 2 - 1.5, -tw / 2 - 0.5], [tw / 2 + 0.5, w / 2 + 1.5]]) {
@@ -956,6 +969,50 @@ W.particles({ count: 1100, size: 1.3, color: L.base, box: 260, fall: 7, sway: 2,
 finishBulbs();
 scene.add(new THREE.Mesh(mergeGeometries(S), DUAL));
 scene.add(new THREE.Mesh(mergeGeometries(RD), ROADMAT));
+// ---------- fireworks on the hour: one burst per hour (1-12) over the square, a rocket rising before each ----------
+{
+  const PER = 110, RISE = 1.2, LIFE = 3.2, COLS = ['red', 'peach', 'yellow', 'green', 'teal', 'sky', 'mauve', 'pink'];
+  const shells = Array.from({ length: 12 }, () => {
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PER * 3), 3));
+    const pts = new THREE.Points(g, new THREE.PointsMaterial({ map: W.soft, size: 6, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    pts.frustumCulled = false; pts.visible = false; scene.add(pts);
+    return { pts, vel: new Float32Array(PER * 3), at: 0, x: 0, y: 0, z: 0, x0: 0, z0: 0, col: 'red' };
+  });
+  animators.push((t, night) => {
+    if (W.clock.struck) {
+      const n = W.clock.c.h % 12 || 12, rand = Math.random;
+      for (let k = 0; k < n; k++) {
+        const s = shells[k], a = rand() * 6.28, r = 20 + rand() * 45;
+        Object.assign(s, { at: t + RISE + 1 + k * 1.7, x: Math.cos(a) * r, z: Math.sin(a) * r, y: G0 + 120 + rand() * 50, x0: Math.cos(a) * 46, z0: Math.sin(a) * 46, col: COLS[(rand() * COLS.length) | 0] });
+        for (let i = 0; i < PER; i++) {                 // even-ish sphere of directions, a little speed jitter
+          const u = rand() * 2 - 1, ph = rand() * 6.28, q = Math.sqrt(1 - u * u), v = 85 + rand() * 15;
+          s.vel.set([Math.cos(ph) * q * v, u * v, Math.sin(ph) * q * v], i * 3);
+        }
+        s.pts.visible = true;
+      }
+    }
+    for (const s of shells) {
+      if (!s.pts.visible) continue;
+      const a = t - s.at, arr = s.pts.geometry.attributes.position.array, m = s.pts.material;
+      if (a > LIFE) { s.pts.visible = false; continue; }
+      m.blending = night > 0.5 ? THREE.AdditiveBlending : THREE.NormalBlending;
+      if (a < 0) {                                      // the rocket: all sparks in one point, climbing from the lamp ring
+        if (a < -RISE) { m.opacity = 0; continue; }
+        const k = smooth(-RISE, 0, a), x = s.x0 + (s.x - s.x0) * k, y = G0 + 9 + (s.y - G0 - 9) * k, z = s.z0 + (s.z - s.z0) * k;
+        for (let i = 0; i < PER; i++) arr.set([x, y, z], i * 3);
+        m.size = 6; m.opacity = 0.9; m.color.copy(P.peach).multiplyScalar(1 + night);
+      } else {
+        const d = (1 - Math.exp(-a * 2.6)) / 2.6, fall = 4 * a * a;
+        for (let i = 0; i < PER; i++) arr.set([s.x + s.vel[i * 3] * d, s.y + s.vel[i * 3 + 1] * d - fall, s.z + s.vel[i * 3 + 2] * d], i * 3);
+        m.size = 11; m.opacity = smooth(0, 0.15, a) * smooth(LIFE, LIFE * 0.35, a) * (0.85 + 0.15 * Math.sin(a * 30));
+        m.color.copy(L[s.col]).lerp(P[s.col].clone().multiplyScalar(1.8), night);
+      }
+      s.pts.geometry.attributes.position.needsUpdate = true;
+    }
+  });
+}
+
 W.finish();
+window.W = W;   // debug handle for the browser console
 </script>
 </body></html>
