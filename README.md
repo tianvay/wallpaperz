@@ -7,21 +7,28 @@ It lives in the system tray (purple crescent icon) and starts with Windows.
 C:\_wallpaperz\
   app\           the program (MochaWallpaper.exe) – don't edit
   source\        C# source code
-  wallpapers\    your wallpaper library – one folder per wallpaper
+  wallpapers\    your wallpaper library
+    animated\    2D animated pictures (one folder per wallpaper)
+    3d\          real-time 3D scenes (one folder per wallpaper)
+    imported\    what you add from the tray menu
   config.json    remembers the selected wallpaper and options
 ```
 
 ## Adding a wallpaper
 
 **Easiest:** right-click the tray icon → **Add wallpaper file…** or **Add wallpaper folder…**.
-It is copied into `wallpapers\` and applied right away.
+It is copied into `wallpapers\imported\` and applied right away.
 
-**By hand:** drop it into `C:\_wallpaperz\wallpapers\` (tray → *Open wallpapers folder*).
+**By hand:** drop it into a category folder such as `C:\_wallpaperz\wallpapers\animated\` (tray → *Open wallpapers folder*).
 It shows up in the tray's **Wallpapers** menu the next time you open it, with no restart needed.
+
+Every folder directly inside `wallpapers\` is a category and becomes a submenu (`3d` shows as *3D*). A new
+category is just a new folder. A wallpaper placed directly in `wallpapers\` (a loose file, or a folder that is
+itself a wallpaper) is listed under *Other*.
 
 What counts as a wallpaper:
 
-| You have | Put it in `wallpapers\` as |
+| You have | Put it in a category folder as |
 |---|---|
 | An image (`.jpg .png .webp .gif .bmp`) | a loose file, or a folder containing it |
 | A video (`.mp4 .webm`, plays muted and looped) | a loose file, or a folder containing it |
@@ -35,7 +42,8 @@ Wallpaper Engine *scene* wallpapers (`scene.pkg`) are a proprietary format and w
 
 ## Tray menu
 
-- **Wallpapers** – pick one (double-click the tray icon to cycle to the next)
+- **Wallpapers** – pick a category (Animated, 3D, …), then a wallpaper (double-click the tray icon to cycle to the
+  next one in the same category)
 - **Reload** – re-open the current wallpaper (after editing its files)
 - **Pause / Resume** – stops rendering entirely (~0% CPU/GPU)
 - **Pause when a fullscreen app runs** – on by default, so games get the GPU
@@ -45,7 +53,7 @@ Wallpaper Engine *scene* wallpapers (`scene.pkg`) are a proprietary format and w
 ## Writing your own animated wallpaper
 
 Any web page works. Keep it full-screen (`100vw × 100vh`, no scrollbars) and reference files with relative
-paths: the folder is served as `https://wallpaper.local/`. Look at `wallpapers\mocha-forest\index.html` for an
+paths: the folder is served as `https://wallpaper.local/`. Look at `wallpapers\animated\mocha-forest\index.html` for an
 example: a canvas drawn over the image with clouds, stars, waterfall, river glints and fireflies.
 Add `#view=x,y,w,h` to the URL when testing it in a browser to zoom into one region of the image.
 

@@ -7,7 +7,7 @@ import json, shutil
 from pathlib import Path
 
 HERE = Path(__file__).parent
-DEST = HERE.parent / 'wallpapers' / 'mocha-forest'
+DEST = HERE.parent / 'wallpapers' / 'animated' / 'mocha-forest'
 pts = (HERE / '_backup' / 'mocha-forest-classic' / 'points.js').read_text(encoding='utf-8')
 P = json.loads(pts[pts.index('=') + 1:].strip().rstrip(';'))
 
@@ -37,6 +37,6 @@ INDEX = """<!doctype html>
 (DEST / 'scene.js').write_text('window.SCENE = ' + json.dumps(scene, separators=(',', ':')) + ';\n', encoding='utf-8')
 (DEST / 'index.html').write_text(INDEX, encoding='utf-8')
 shutil.copy(HERE / 'engine' / 'engine.js', DEST / 'engine.js')
-(DEST / 'project.json').write_text(json.dumps(dict(file='index.html', preview='preview.jpg', title='Mocha Forest (animated)', type='web'), indent=2), encoding='utf-8')
+(DEST / 'project.json').write_text(json.dumps(dict(file='index.html', preview='preview.jpg', title='Mocha Forest', type='web'), indent=2), encoding='utf-8')
 (DEST / 'points.js').unlink(missing_ok=True)
 print('built mocha-forest:', len(P['stars']), 'stars,', len(P['river']), 'river points')

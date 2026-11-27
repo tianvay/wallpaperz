@@ -7,7 +7,7 @@ namespace MochaWallpaper;
 // Lives one level above the app folder: C:\_wallpaperz\config.json
 class Config
 {
-    public string Selected { get; set; } = "mocha-forest";
+    public string Selected { get; set; } = "animated/mocha-forest";
     public string LibraryPath { get; set; } = "";
     public bool PauseWhenFullscreen { get; set; } = true;
 
@@ -95,29 +95,37 @@ class TrayApp : ApplicationContext
         return Icon.FromHandle(bmp.GetHicon());
     }
 
+    // Wallpapers > Animated / 3D / … > the wallpapers of that category.
     void FillWallpaperMenu()
     {
         wallpapersMenu.DropDownItems.Clear();
-        var all = Library.Scan(cfg.Library);
-        if (all.Count == 0)
+        var cats = Library.Categories(cfg.Library);
+        if (cats.Count == 0)
             wallpapersMenu.DropDownItems.Add(new ToolStripMenuItem("(folder is empty)") { Enabled = false });
-        foreach (var w in all)
+        foreach (var c in cats)
         {
-            var item = new ToolStripMenuItem(w.Title) { Checked = w.Id.Equals(cfg.Selected, StringComparison.OrdinalIgnoreCase) };
-            item.Click += (_, _) => Select(w.Id);
-            wallpapersMenu.DropDownItems.Add(item);
+            var sub = new ToolStripMenuItem(c.Name);
+            foreach (var w in c.Items)
+            {
+                var item = new ToolStripMenuItem(w.Title) { Checked = Library.Matches(w, cfg.Selected) };
+                item.Click += (_, _) => Select(w.Id);
+                sub.DropDownItems.Add(item);
+            }
+            sub.Checked = c.Items.Any(w => Library.Matches(w, cfg.Selected));
+            wallpapersMenu.DropDownItems.Add(sub);
         }
     }
 
     void Select(string id) { cfg.Selected = id; cfg.Save(); Rebuild(); }
 
-    // Double-click the tray icon to cycle through the library.
+    // Double-click the tray icon to cycle through the current category.
     void Next()
     {
-        var all = Library.Scan(cfg.Library);
-        if (all.Count == 0) return;
-        int i = all.FindIndex(w => w.Id.Equals(cfg.Selected, StringComparison.OrdinalIgnoreCase));
-        Select(all[(i + 1) % all.Count].Id);
+        var cats = Library.Categories(cfg.Library);
+        var cat = cats.FirstOrDefault(c => c.Items.Any(w => Library.Matches(w, cfg.Selected))) ?? cats.FirstOrDefault();
+        if (cat == null) return;
+        int i = cat.Items.FindIndex(w => Library.Matches(w, cfg.Selected));
+        Select(cat.Items[(i + 1) % cat.Items.Count].Id);
     }
 
     void Rebuild()
@@ -126,7 +134,7 @@ class TrayApp : ApplicationContext
         windows.Clear();
 
         var all = Library.Scan(cfg.Library);
-        var wp = all.FirstOrDefault(w => w.Id.Equals(cfg.Selected, StringComparison.OrdinalIgnoreCase)) ?? all.FirstOrDefault();
+        var wp = all.FirstOrDefault(w => Library.Matches(w, cfg.Selected)) ?? all.FirstOrDefault();
         if (wp == null)
         {
             tray.ShowBalloonTip(4000, "Mocha Wallpaper", $"No wallpapers found in {cfg.Library}", ToolTipIcon.Warning);
@@ -192,7 +200,7 @@ class TrayApp : ApplicationContext
                 MessageBox.Show("That folder has no index.html, image or video in it.", "Mocha Wallpaper");
                 return;
             }
-            var id = Library.Import(source, cfg.Library);
+            var id = Library.Imported + "/" + Library.Import(source, Path.Combine(cfg.Library, Library.Imported));
             Select(id);
             tray.ShowBalloonTip(3000, "Mocha Wallpaper", "Added and applied: " + id, ToolTipIcon.Info);
         }

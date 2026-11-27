@@ -1,7 +1,7 @@
 """Builds animated Catppuccin Mocha wallpapers from the images in wallpapers/_todos.
 
 usage:  python -I build.py [scene ...]        (no args = all scenes)
-Each scene: recolor -> effect mask (R water, G sky, B lights, A fog) -> overlay effects -> wallpapers/mocha-<name>/
+Each scene: recolor -> effect mask (R water, G sky, B lights, A fog) -> overlay effects -> wallpapers/animated/mocha-<name>/
 """
 import json, shutil, sys
 from pathlib import Path
@@ -36,7 +36,7 @@ def city():
         return {'windows_off.png': Image.fromarray(rgba)}
 
     return dict(
-        title='Mocha City (animated)', src=src, recolor=V_VIVID, post=post,
+        title='Mocha City', src=src, recolor=V_VIVID, post=post,
         mask=dict(a=fog),
         scene=dict(amp=dict(fog=0.3), fog=dict(color='lavender'), effects=[
             dict(type='beams', items=[
@@ -67,7 +67,7 @@ def mountains():
     refl = rect(2020, 1203, 2095, 1238) & lake
     lake_in = nd.binary_erosion(lake, iterations=8)      # keep shorelines, boat and rocks crisp
     return dict(
-        title='Mocha Mountains (animated)', src=src, recolor=V_SOFT,
+        title='Mocha Mountains', src=src, recolor=V_SOFT,
         # a still mountain lake: no pixel warping, it lives through light lines, glints and rings
         mask=dict(b=soft(lights, 1.5), a=band(940, 1060, 80) * soft(L > 48, 3)),
         scene=dict(amp=dict(lights=1.2, fog=0.6), lightCell=12, fog=dict(color='text'), effects=[
@@ -101,7 +101,7 @@ def tranquility():
     river_in = nd.binary_erosion(river, iterations=6)
     fg = soft((L < 100) | (YY > 800), 1.0)
     return dict(
-        title='Mocha Tranquility (animated)', src=src, recolor=V_SOFT,
+        title='Mocha Tranquility', src=src, recolor=V_SOFT,
         # no pixel warping on the river: it shows flow through glints drifting downstream (towards the viewer)
         mask=dict(a=band(965, 1075, 55) * rect(480, 0, 2080, H) * soft(L > 70, 3)),
         fg=(fg, 380, 830),
@@ -130,7 +130,7 @@ def beach():
     foam = nd.binary_opening(foam, iterations=1)
     # Flat vector art: no pixel warping at all. Calm overlays in the same flat style instead.
     return dict(
-        title='Mocha Beach (animated)', src=src, recolor=V_SOFT,
+        title='Mocha Beach', src=src, recolor=V_SOFT,
         mask=dict(),
         fg=(fg, 0, 800),
         layers={'foam.png': (soft(foam, 1.2), 780, 1440, 0.35)},
@@ -163,7 +163,7 @@ def street():
     # A wet road stands still: no pixel warping. It lives through drips landing in the puddles
     # and small sparkles on the light reflections.
     return dict(
-        title='Mocha Street (animated)', src=src, recolor=V_VIVID,
+        title='Mocha Street', src=src, recolor=V_VIVID,
         mask=dict(),
         scene=dict(effects=[
             dict(type='stars', points=stars, color='rosewater', scale=0.9, alpha=0.9),
@@ -198,7 +198,7 @@ INDEX = """<!doctype html>
 
 def build(name):
     d = SCENES[name]()
-    dest = ROOT / 'wallpapers' / f'mocha-{name}'
+    dest = ROOT / 'wallpapers' / 'animated' / f'mocha-{name}'
     dest.mkdir(parents=True, exist_ok=True)
     bg = mocha.recolor(str(d['src']), str(dest / 'background.jpg'), **d['recolor'])
     if 'post' in d:   # scene tweaks that need the recolored pixels; may return extra image files

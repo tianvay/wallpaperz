@@ -2,11 +2,63 @@ using System.Text.Json;
 
 namespace MochaWallpaper;
 
-// Every subfolder of the library is one wallpaper. Loose image/video/html files in the library root count too.
+// The library is split into category folders (animated\, 3d\ …); every subfolder of a category is one wallpaper.
+// A top-level folder that is itself a wallpaper, and loose files in the root, land in the "Other" category.
+// Id is the path relative to the library, e.g. "animated/mocha-forest".
 record Wallpaper(string Id, string Title, string Entry);
+record Category(string Name, List<Wallpaper> Items);
 
 static class Library
 {
+    public const string Imported = "imported";   // where "Add wallpaper…" puts new items
+
+    public static List<Category> Categories(string dir)
+    {
+        var cats = new List<Category>();
+        if (!Directory.Exists(dir)) return cats;
+        var other = new List<Wallpaper>();
+        foreach (var sub in Folders(dir))
+        {
+            var name = Path.GetFileName(sub);
+            if (ResolveEntry(sub, out _) != null) { other.AddRange(ScanFolder(dir, "", only: sub)); continue; }
+            var items = ScanFolder(sub, name + "/");
+            if (items.Count > 0) cats.Add(new Category(CategoryTitle(name), items));
+        }
+        other.AddRange(LooseFiles(dir, ""));
+        if (other.Count > 0) cats.Add(new Category("Other", other));
+        return cats;
+    }
+
+    public static List<Wallpaper> Scan(string dir) => Categories(dir).SelectMany(c => c.Items).ToList();
+
+    // Ids used to be bare folder names before categories existed: match those by their last segment.
+    public static bool Matches(Wallpaper w, string id) =>
+        id != null && (w.Id.Equals(id, StringComparison.OrdinalIgnoreCase) ||
+                       (!id.Contains('/') && w.Id.EndsWith("/" + id, StringComparison.OrdinalIgnoreCase)));
+
+    static IEnumerable<string> Folders(string dir) => Directory.GetDirectories(dir)
+        .Where(d => !Path.GetFileName(d).StartsWith('_'))   // _todos, _drafts … are work folders, not wallpapers
+        .OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
+
+    static List<Wallpaper> ScanFolder(string dir, string prefix, string only = null)
+    {
+        var list = new List<Wallpaper>();
+        foreach (var sub in only != null ? new[] { only } : Folders(dir))
+        {
+            var entry = ResolveEntry(sub, out var title);
+            var name = Path.GetFileName(sub);
+            if (entry != null) list.Add(new Wallpaper(prefix + name, title ?? Pretty(name), entry));
+        }
+        if (only == null) list.AddRange(LooseFiles(dir, prefix));
+        return list;
+    }
+
+    static IEnumerable<Wallpaper> LooseFiles(string dir, string prefix) => Directory.GetFiles(dir).Where(IsMedia)
+        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+        .Select(f => new Wallpaper(prefix + Path.GetFileName(f), Pretty(Path.GetFileNameWithoutExtension(f)), f));
+
+    static string CategoryTitle(string folder) => folder.Length <= 3 ? folder.ToUpperInvariant() : Pretty(folder);
+
     static readonly string[] Images = { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp" };
     static readonly string[] Videos = { ".mp4", ".webm" };
     static readonly string[] Pages = { ".html", ".htm" };
@@ -15,21 +67,6 @@ static class Library
     {
         var e = Path.GetExtension(p).ToLowerInvariant();
         return Images.Contains(e) || Videos.Contains(e) || Pages.Contains(e);
-    }
-
-    public static List<Wallpaper> Scan(string dir)
-    {
-        var list = new List<Wallpaper>();
-        if (!Directory.Exists(dir)) return list;
-        foreach (var sub in Directory.GetDirectories(dir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
-        {
-            if (Path.GetFileName(sub).StartsWith('_')) continue;   // _todos, _drafts … are work folders, not wallpapers
-            var entry = ResolveEntry(sub, out var title);
-            if (entry != null) list.Add(new Wallpaper(Path.GetFileName(sub), title ?? Pretty(Path.GetFileName(sub)), entry));
-        }
-        foreach (var f in Directory.GetFiles(dir).Where(IsMedia).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
-            list.Add(new Wallpaper(Path.GetFileName(f), Pretty(Path.GetFileNameWithoutExtension(f)), f));
-        return list;
     }
 
     // project.json "file"  >  index.html / any .html  >  video  >  image (preview.* ignored)
