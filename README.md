@@ -79,7 +79,7 @@ Folders whose name starts with `_` (like `wallpapers\_todos`) are work folders a
 ## Building the app
 
 `app\` is build output and is not in git: after a fresh clone, or after changing `source\`, build it yourself.
-You need the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the WebView2 runtime (already part of
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and the WebView2 runtime (already part of
 Windows 11). If the app is running, exit it from the tray first (the .exe is locked while it runs), then:
 
 ```powershell
