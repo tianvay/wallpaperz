@@ -3,7 +3,7 @@
 A tiny live-wallpaper app: it shows a web page, image or video behind your desktop icons.
 It lives in the system tray (purple crescent icon) and starts with Windows.
 
-**Just want to use it?** Run `MochaWallpaperSetup.exe`. No admin rights and no .NET install are needed; it
+**Just want to use it?** Download and run [`dist/MochaWallpaperSetup.exe`](dist/MochaWallpaperSetup.exe). No admin rights and no .NET install are needed; it
 installs to `%LocalAppData%\Programs\Mocha Wallpaper` and can be removed under *Settings → Apps*. The setup is not
 code-signed yet, so Windows SmartScreen asks once: click *More info → Run anyway*.
 
@@ -102,7 +102,9 @@ powershell -ExecutionPolicy Bypass -File C:\_wallpaperz\installeruild.ps1
 This publishes the app self-contained (the .NET runtime is bundled), stages it with every category folder from
 `wallpapers\` (not `_*` work folders or `imported\`) and compiles `installer\MochaWallpaper.iss` with
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`). The result is
-`dist\MochaWallpaperSetup.exe` (about 45 MB). Bump `<Version>` in `source\MochaWallpaper.csproj` for a new release.
+`dist\MochaWallpaperSetup.exe` (about 45 MB), which is committed so people can download it straight from the
+repository: rebuild and commit it after changing the app or the wallpapers. Bump `<Version>` in
+`source\MochaWallpaper.csproj` for a new release.
 
 The setup installs per user with the same layout as this repository (`app\`, `wallpapers\`, `config.json`), offers
 autostart, shows the tray-icon hint on its last page, and on update or uninstall first runs
