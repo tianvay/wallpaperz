@@ -186,7 +186,53 @@ def street():
                 dict(x=648, y=818, r=120, color='sky', speed=0.7, alpha=0.2)])]))
 
 
-SCENES = dict(city=city, mountains=mountains, tranquility=tranquility, beach=beach, street=street)
+def dusk():
+    src = TODO / 'minimalist-mountains-landscape-scenery-n4-2560x1440.jpg'
+    a, L = load(src)
+    stars = small_bright(L, 25, 9, 9, rect(0, 0, 2560, 320))
+    # still lake between the shores: lighter than the navy shore and firs
+    lake = rect(700, 962, 2420, 1222) & (L > 75)
+    lake = nd.binary_opening(lake, iterations=3)
+    lake_in = nd.binary_erosion(lake, iterations=8)
+    lake_open = lake_in & (YY < 1060)          # upper part, above the reflected tree line
+    # mountains, sun and everything below hide the clouds, birds and sun glow drawn behind them. The skyline is
+    # traced coarsely (the thin cloud streaks and the soft sun halo fool a plain edge search), then snapped in
+    # every column to the strongest color edge within 25 px.
+    rough = [(0, 530), (125, 497), (150, 403), (175, 485), (215, 462), (265, 450), (280, 465), (340, 510), (390, 520),
+             (480, 593), (540, 590), (580, 577), (660, 578), (710, 608), (772, 632), (800, 603), (840, 578), (883, 570),
+             (930, 578), (965, 603), (988, 640), (993, 685), (1030, 676), (1160, 670), (1220, 640), (1325, 614),
+             (1360, 620), (1500, 630), (1550, 598), (1590, 592), (1700, 520), (1725, 511), (1805, 562), (1850, 556),
+             (1980, 610), (2055, 622), (2100, 595), (2170, 567), (2200, 548), (2270, 510), (2340, 460), (2400, 440),
+             (2460, 388), (2520, 428), (2560, 428)]
+    guess = np.interp(np.arange(W), *zip(*rough))
+    step = np.sqrt((np.diff(a, axis=0) ** 2).sum(-1))
+    top = np.empty(W, int)
+    for x in range(W):
+        ys = np.arange(int(guess[x]) - 25, int(guess[x]) + 25)
+        # a real skyline stays different from the sky further down; a thin cloud streak returns to sky colour
+        below = np.sqrt(((a[ys + 12, x] - a[ys - 3, x]) ** 2).sum(-1))
+        top[x] = ys[int(np.minimum(step[ys, x], below).argmax())] + 1
+    fg = soft(YY >= nd.median_filter(top, 5)[None, :], 0.8)
+    return dict(
+        title='Mocha Dusk', src=src, recolor=V_SOFT,
+        # flat vector art: no pixel warping, only a thin mist drifting along the foot of the mountains
+        mask=dict(a=band(870, 945, 45) * rect(640, 0, 2560, H) * soft(L > 70, 3)),
+        fg=(fg, 0, 900),
+        scene=dict(amp=dict(fog=0.5), fog=dict(color='pink'), effects=[
+            dict(type='glows', layer='back', items=[dict(x=883, y=660, r=430, color='peach', speed=0.25, alpha=0.32)]),
+            dict(type='streakClouds', y0=310, y1=560, count=9, speed=0.7),
+            dict(type='birds', y0=420, y1=560, count=4, color='surface0', alpha=0.5, layer='back'),
+            dict(type='stars', points=stars, color='rosewater', scale=0.9),
+            dict(type='shootingStar', x0=150, x1=2400, y0=20, y1=260, every=[10, 35], color='rosewater'),
+            dict(type='streaks', points=sample(lake_in, 900, 3), colors=['rosewater', 'pink', 'text'], count=26, len=90, speed=4, alpha=0.3),
+            dict(type='ripples', points=sample(lake_in & (YY > 1000), 30, 5), every=[3, 8], size=22, color='rosewater', alpha=0.35),
+            dict(type='glints', points=sample(lake_open, 700), colors=['rosewater', 'peach', 'white'], count=30, size=12, alpha=0.5),
+            # fireflies in the dark firs on both shores
+            dict(type='motes', x0=40, x1=1050, y0=1020, y1=1380, count=14, colors=['yellow', 'yellow', 'peach'], core=True, coreR=2.5),
+            dict(type='motes', x0=1830, x1=2480, y0=1180, y1=1360, count=8, colors=['yellow', 'peach'], core=True, coreR=2.5)]))
+
+
+SCENES = dict(city=city, mountains=mountains, tranquility=tranquility, beach=beach, street=street, dusk=dusk)
 
 INDEX = """<!doctype html>
 <html><head><meta charset="utf-8"><title>{title}</title>
