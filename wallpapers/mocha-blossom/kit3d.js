@@ -5,6 +5,7 @@
 // URL options understood by every scene:
 //   ?speed=1  ?t=0 (start offset s)  ?day=60 (minutes per day)  ?tod=0.68 (0 midnight .25 sunrise .5 noon .75 sunset)
 //   ?fps=60  ?bloom=1  ?hd=0  ?cam=x,y,z,lookX,lookY,lookZ (debug: fixed camera)
+//   ?clock=11:59:40 (debug: start the wall clock at this time)  ?clockrate=1 (debug: wall clock runs this many times faster)
 import * as THREE from 'three';
 import { Reflector } from './lib/Reflector.js';
 import { mergeGeometries } from './lib/BufferGeometryUtils.js';
@@ -56,6 +57,18 @@ export function ridged(x, z, oct) {
 }
 export function makeRng(seed) {
   return () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+// ---------- wall clock ----------
+// Everything else runs on seconds since the page loaded; scenes that tell the real time read wallClock() instead.
+// Returns { h, m, s, hour, min } with s fractional, hour = h + m/60 + s/3600 and min = m + s/60.
+const CLOCK_Q = new URLSearchParams(location.search), CLOCK_LOAD = Date.now(), CLOCK_RATE = CLOCK_Q.has('clockrate') ? parseFloat(CLOCK_Q.get('clockrate')) : 1;
+let CLOCK_START = CLOCK_LOAD;
+if (CLOCK_Q.has('clock')) { const [h, m = 0, s = 0] = CLOCK_Q.get('clock').split(':').map(Number); const d = new Date(CLOCK_LOAD); d.setHours(h, m, s, 0); CLOCK_START = d.getTime(); }
+export function wallClock() {
+  const d = new Date(CLOCK_START + (Date.now() - CLOCK_LOAD) * CLOCK_RATE);
+  const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds() + d.getMilliseconds() / 1000;
+  return { h, m, s, min: m + s / 60, hour: h + m / 60 + s / 3600 };
 }
 
 // ---------- the world ----------
