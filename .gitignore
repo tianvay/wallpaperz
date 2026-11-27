@@ -18,3 +18,7 @@ ideas.md
 # installer build output (installer/build.ps1); the setup is published as a GitHub release asset
 dist/
 installer/staging/
+
+# source images waiting for conversion (not part of the repository, see README)
+wallpapers/_todos/*
+!wallpapers/_todos/.gitkeep
