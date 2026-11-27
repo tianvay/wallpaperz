@@ -4,8 +4,11 @@
 ; Installs per user (no admin rights) into %LocalAppData%\Programs\Mocha Wallpaper with the same layout as the
 ; repository, so the app finds its library and config next to itself:
 ;   app\          MochaWallpaper.exe + the bundled .NET runtime
-;   wallpapers\   the bundled categories (animated\, 3d\); "Add wallpaper…" adds imported\
+;   wallpapers\   downloaded by the app from GitHub on its first start (animated\, 3d\ …); imports go to imported\
 ;   config.json   written by the app
+;
+; The setup ships no wallpapers on purpose, so it rarely needs a new build: wallpapers pushed to the repository
+; reach every user through the tray's "Get new wallpapers", new app versions through "Check for app updates".
 
 #define AppName "Mocha Wallpaper"
 #define AppExe "MochaWallpaper.exe"
@@ -49,8 +52,8 @@ en.NoWebView={#AppName} needs the Microsoft Edge WebView2 Runtime, which is miss
 de.NoWebView={#AppName} braucht die Microsoft Edge WebView2 Runtime, die auf diesem PC fehlt.%n%nInstalliere sie von https://go.microsoft.com/fwlink/p/?LinkId=2124703 und starte dieses Setup danach erneut.
 
 [Messages]
-en.FinishedLabel={#AppName} lives in the system tray: look for the purple crescent at the bottom right (maybe behind the ^ arrow). Right-click it to pick a wallpaper.
-de.FinishedLabel={#AppName} läuft im Infobereich der Taskleiste: Du findest den lila Halbmond dort unten rechts (eventuell hinter dem ^-Pfeil). Mit einem Rechtsklick wählst du ein Wallpaper aus.
+en.FinishedLabel={#AppName} lives in the system tray: look for the purple crescent at the bottom right (maybe behind the ^ arrow). On its first start it downloads the wallpapers, which takes a few seconds. Then right-click the crescent to pick one.
+de.FinishedLabel={#AppName} läuft im Infobereich der Taskleiste: Du findest den lila Halbmond dort unten rechts (eventuell hinter dem ^-Pfeil). Beim ersten Start lädt es die Wallpaper herunter, das dauert ein paar Sekunden. Danach wählst du mit einem Rechtsklick auf den Halbmond eines aus.
 
 [Tasks]
 Name: "autostart"; Description: "{cm:Autostart}"
@@ -62,7 +65,6 @@ Type: filesandordirs; Name: "{app}\app"
 
 [Files]
 Source: "{#Staging}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#Staging}\wallpapers\*"; DestDir: "{app}\wallpapers"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userprograms}\{#AppName}"; Filename: "{app}\app\{#AppExe}"; WorkingDir: "{app}\app"

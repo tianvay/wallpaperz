@@ -1,6 +1,6 @@
-# Builds dist\MochaWallpaperSetup.exe: publishes the app self-contained (no .NET install needed on the target PC),
-# stages it next to the bundled wallpaper categories, and runs the Inno Setup compiler on MochaWallpaper.iss.
-# Needs the .NET 10 SDK and Inno Setup 6 (winget install JRSoftware.InnoSetup).
+# Builds dist\MochaWallpaperSetup.exe: publishes the app self-contained (no .NET install needed on the target PC)
+# and runs the Inno Setup compiler on MochaWallpaper.iss. No wallpapers go in: the app downloads them from GitHub.
+# Needs the .NET 10 SDK and Inno Setup 6 (winget install JRSoftware.InnoSetup). To publish it, run release.ps1.
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $root = Split-Path $here
@@ -15,12 +15,6 @@ if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 dotnet publish (Join-Path $root 'source') -c Release -r win-x64 --self-contained true -o (Join-Path $staging 'app') `
     -p:PublishReadyToRun=true -p:DebugType=none
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
-
-# Bundle every category folder; skip work folders (_todos, _test …) and the user's own imports.
-foreach ($cat in Get-ChildItem (Join-Path $root 'wallpapers') -Directory) {
-    if ($cat.Name.StartsWith('_') -or $cat.Name -eq 'imported') { continue }
-    Copy-Item $cat.FullName (Join-Path $staging "wallpapers\$($cat.Name)") -Recurse
-}
 
 & $iscc /Qp (Join-Path $here 'MochaWallpaper.iss')
 if ($LASTEXITCODE) { throw 'Inno Setup failed' }

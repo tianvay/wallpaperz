@@ -36,7 +36,7 @@ class TrayApp : ApplicationContext
     readonly List<WallpaperWindow> windows = new();
     readonly System.Windows.Forms.Timer watchdog = new() { Interval = 2000 };
     readonly ToolStripMenuItem wallpapersMenu, pauseItem, autostartItem, fsItem;
-    bool userPaused, fsPaused;
+    bool userPaused, fsPaused, busy;
     IntPtr host;
 
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -54,6 +54,7 @@ class TrayApp : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(wallpapersMenu);
+        menu.Items.Add("Get new wallpapers", null, (_, _) => SyncWallpapers(quiet: false));
         menu.Items.Add("Add wallpaper file…", null, (_, _) => AddFile());
         menu.Items.Add("Add wallpaper folder…", null, (_, _) => AddFolder());
         menu.Items.Add("Open wallpapers folder", null, (_, _) =>
@@ -67,6 +68,7 @@ class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(fsItem);
         menu.Items.Add(autostartItem);
+        menu.Items.Add("Check for app updates", null, (_, _) => CheckForUpdate());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
         menu.Opening += (_, _) => FillWallpaperMenu();   // rescans the folder each time the menu opens
@@ -78,8 +80,73 @@ class TrayApp : ApplicationContext
         watchdog.Tick += (_, _) => Watch();
         watchdog.Start();
         FillWallpaperMenu();
-        Rebuild();
         ListenForExit();
+        // First start after installing: the setup ships no wallpapers, they all come from GitHub.
+        if (Library.Scan(cfg.Library).Count == 0 && !GitHub.IsDevCheckout(cfg.Library)) SyncWallpapers(quiet: true);
+        else Rebuild();
+    }
+
+    void Balloon(string text, ToolTipIcon icon = ToolTipIcon.Info) => tray.ShowBalloonTip(4000, "Mocha Wallpaper", text, icon);
+
+    // quiet: the automatic first download, which says less and always applies a wallpaper at the end.
+    async void SyncWallpapers(bool quiet)
+    {
+        if (busy) return;
+        if (GitHub.IsDevCheckout(cfg.Library))
+        {
+            MessageBox.Show("This copy runs from a git checkout of the repository: update its wallpapers with git pull.", "Mocha Wallpaper");
+            return;
+        }
+        busy = true;
+        Balloon(quiet ? "Downloading the wallpapers…" : "Looking for new wallpapers…");
+        try
+        {
+            var r = await WallpaperSync.Run(cfg.Library);
+            var titles = Library.Scan(cfg.Library).ToDictionary(w => w.Id, w => w.Title, StringComparer.OrdinalIgnoreCase);
+            string Names(List<string> ids) => string.Join(", ", ids.Select(id => titles.TryGetValue(id, out var t) ? t : id));
+            if (quiet) Balloon($"{r.Added.Count} wallpapers ready. Right-click the crescent to pick one.");
+            else if (!r.Any) Balloon("You already have all wallpapers.");
+            else
+            {
+                var lines = new List<string>();
+                if (r.Added.Count > 0) lines.Add("New: " + Names(r.Added));
+                if (r.Updated.Count > 0) lines.Add("Updated: " + Names(r.Updated));
+                if (r.Removed.Count > 0) lines.Add($"Removed: {r.Removed.Count}");
+                Balloon(string.Join("\n", lines));
+            }
+            bool current = r.Updated.Concat(r.Removed).Any(id => id.Equals(cfg.Selected, StringComparison.OrdinalIgnoreCase));
+            if (quiet || current || windows.Count == 0) Rebuild();
+        }
+        catch (Exception ex)
+        {
+            Balloon("Could not download wallpapers: " + ex.Message, ToolTipIcon.Warning);
+            if (quiet) Rebuild();
+        }
+        finally { busy = false; }
+    }
+
+    async void CheckForUpdate()
+    {
+        if (busy) return;
+        if (GitHub.IsDevCheckout(cfg.Library))
+        {
+            MessageBox.Show("This copy runs from a git checkout of the repository: rebuild it from source instead.", "Mocha Wallpaper");
+            return;
+        }
+        busy = true;
+        try
+        {
+            var update = await AppUpdate.Check();
+            if (update == null) { Balloon($"Mocha Wallpaper {AppUpdate.Current} is up to date."); return; }
+            var (version, url) = update.Value;
+            if (MessageBox.Show($"Mocha Wallpaper {version} is available (you have {AppUpdate.Current}).\n\nInstall it now? " +
+                    "The app restarts by itself, your settings and wallpapers stay.", "Mocha Wallpaper",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            Balloon("Downloading the update…");
+            await AppUpdate.Install(url);   // the setup closes this app via --exit and starts the new version
+        }
+        catch (Exception ex) { Balloon("Could not check for updates: " + ex.Message, ToolTipIcon.Warning); }
+        finally { busy = false; }
     }
 
     readonly EventWaitHandle exitSignal = new(false, EventResetMode.AutoReset, Program.ExitEventName);
@@ -146,7 +213,7 @@ class TrayApp : ApplicationContext
         var wp = all.FirstOrDefault(w => Library.Matches(w, cfg.Selected)) ?? all.FirstOrDefault();
         if (wp == null)
         {
-            tray.ShowBalloonTip(4000, "Mocha Wallpaper", $"No wallpapers found in {cfg.Library}", ToolTipIcon.Warning);
+            if (!busy) Balloon("No wallpapers yet: right-click the crescent and choose Get new wallpapers.", ToolTipIcon.Warning);
             return;
         }
         var tip = "Mocha Wallpaper – " + wp.Title;

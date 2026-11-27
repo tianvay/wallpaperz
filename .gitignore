@@ -15,5 +15,6 @@ wallpapers/_test/
 # brainstorming notes
 ideas.md
 
-# installer staging (installer/build.ps1); the finished setup in dist/ is tracked
+# installer build output (installer/build.ps1); the setup is published as a GitHub release asset
+dist/
 installer/staging/

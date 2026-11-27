@@ -3,9 +3,11 @@
 A tiny live-wallpaper app: it shows a web page, image or video behind your desktop icons.
 It lives in the system tray (purple crescent icon) and starts with Windows.
 
-**Just want to use it?** Download and run [`dist/MochaWallpaperSetup.exe`](dist/MochaWallpaperSetup.exe). No admin rights and no .NET install are needed; it
-installs to `%LocalAppData%\Programs\Mocha Wallpaper` and can be removed under *Settings → Apps*. The setup is not
-code-signed yet, so Windows SmartScreen asks once: click *More info → Run anyway*.
+**Just want to use it?** Download and run
+[MochaWallpaperSetup.exe](https://github.com/tianvay/wallpaperz/releases/latest/download/MochaWallpaperSetup.exe).
+No admin rights and no .NET install are needed; it installs to `%LocalAppData%\Programs\Mocha Wallpaper` and can be
+removed under *Settings → Apps*. On its first start the app downloads all wallpapers from this repository. The setup
+is not code-signed yet, so Windows SmartScreen asks once: click *More info → Run anyway*.
 
 ```
 C:\_wallpaperz\
@@ -52,6 +54,8 @@ Wallpaper Engine *scene* wallpapers (`scene.pkg`) are a proprietary format and w
 - **Pause / Resume** – stops rendering entirely (~0% CPU/GPU)
 - **Pause when a fullscreen app runs** – on by default, so games get the GPU
 - **Start with Windows**
+- **Get new wallpapers** – downloads new and changed wallpapers from this repository (see below)
+- **Check for app updates** – installs a newer app version from the latest GitHub release; the app restarts by itself
 - **Exit** – brings back your normal static Windows wallpaper
 
 ## Writing your own animated wallpaper
@@ -96,18 +100,32 @@ Start `app\MochaWallpaper.exe` and tick **Start with Windows** in the tray menu 
 ## Building the installer
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\_wallpaperz\installeruild.ps1
+powershell -ExecutionPolicy Bypass -File C:\_wallpaperz\installer\build.ps1
 ```
 
-This publishes the app self-contained (the .NET runtime is bundled), stages it with every category folder from
-`wallpapers\` (not `_*` work folders or `imported\`) and compiles `installer\MochaWallpaper.iss` with
-[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`). The result is
-`dist\MochaWallpaperSetup.exe` (about 45 MB), which is committed so people can download it straight from the
-repository: rebuild and commit it after changing the app or the wallpapers. Bump `<Version>` in
-`source\MochaWallpaper.csproj` for a new release.
+This publishes the app self-contained (the .NET runtime is bundled) and compiles `installer\MochaWallpaper.iss` with
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`) into
+`dist\MochaWallpaperSetup.exe` (about 40 MB, not in git). The setup ships **no wallpapers**, so it rarely changes.
 
 The setup installs per user with the same layout as this repository (`app\`, `wallpapers\`, `config.json`), offers
 autostart, shows the tray-icon hint on its last page, and on update or uninstall first runs
 `MochaWallpaper.exe --exit` so the running copy quits cleanly and restores the normal Windows wallpaper.
-An update keeps the user's settings and imported wallpapers; uninstalling removes everything.
+An update keeps the user's settings and wallpapers; uninstalling removes everything.
 `installer\app.ico` comes from `tools\make_icon.py`.
+
+## Publishing
+
+**Wallpapers:** commit and push them to `main`. That's all: *Get new wallpapers* (and the first start of a fresh
+install) mirrors `wallpapers\<category>\<wallpaper>\` from the latest `main` through the GitHub API, downloading only
+files whose git blob hash differs. Wallpapers deleted from the repository disappear on the next sync; `imported\`,
+`_*` work folders and folders the user made themselves are never touched (`wallpapers\.sync.json` lists what the sync
+manages). A copy that runs from a git checkout, like `C:\_wallpaperz\app`, refuses to sync or self-update: use git.
+
+**App:** bump `<Version>` in `source\MochaWallpaper.csproj`, commit and push, then run
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\_wallpaperz\installer\release.ps1
+```
+
+It builds the setup and attaches it to a GitHub release `v<Version>` (needs `gh`, logged in). Installed copies find it
+through *Check for app updates*, and the download link at the top of this page always points to the newest release.
