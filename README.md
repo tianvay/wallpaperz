@@ -80,22 +80,3 @@ dotnet publish -c Release -o C:\_wallpaperz\app
 ```
 
 Start `app\MochaWallpaper.exe` and tick **Start with Windows** in the tray menu to run it at every logon.
-
-## Blender prototype (`wallpapers\proto-blossom`)
-
-A test of a textured, physically lit style for the 3D wallpapers: Blossom Hill rebuilt with Blender models, PBR photo
-textures (terrain splatting, normal maps), photo skies cross-fading through the day, planar-reflection water, soft
-shadows and baked ambient occlusion. It is self-contained (does not use `kit3d.js`). Same URL options as the other 3D
-scenes where they make sense: `?tod=0.5`, `?day=4`, `?fps=30`, `?hd=1`, `?cam=x,y,z,lx,ly,lz`.
-
-Rebuilding its files (`tools\proto\`):
-
-```powershell
-python -I tools\proto\fetch.py          # CC0 textures, skies and models from Poly Haven -> tools\proto\_src (not in git)
-python -I tools\proto\textures.py       # blossom/leaf cards, sky panoramas (sun painted out), terrain textures -> tex\
-& "C:\Program Files\Blender Foundation\Blender 5.3\blender.exe" -b --factory-startup -P tools\proto\blender_assets.py
-```
-
-`blender_assets.py` builds pagoda, hall, three houses, torii, lanterns, pier, boat and five trees, bakes ambient
-occlusion into their vertex colours with Cycles and exports `assets\buildings.glb` and `assets\nature.glb`
-(add `-- --fast` to skip the bake).
